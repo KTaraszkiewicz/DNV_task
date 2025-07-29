@@ -128,18 +128,21 @@ void GLWidget::paintGL()
     // Use shader program
     shaderProgram->bind();
 
-    // Update model matrix with rotations and zoom
+    // Update camera matrices
+    if (camera) {
+        camera->aspect = float(width()) / float(height() ? height() : 1);
+        viewMatrix = camera->getViewMatrix();
+        projectionMatrix = camera->getProjectionMatrix();
+    }
     modelMatrix.setToIdentity();
     modelMatrix.scale(zoomFactor);
     modelMatrix.rotate(rotationX, 1, 0, 0);
     modelMatrix.rotate(rotationY, 0, 1, 0);
     modelMatrix.rotate(rotationZ, 0, 0, 1);
 
-    // Calculate MVP matrix
     QMatrix4x4 mvpMatrix = projectionMatrix * viewMatrix * modelMatrix;
     QMatrix4x4 normalMatrix = modelMatrix.inverted().transposed();
 
-    // Set transformation uniforms
     shaderProgram->setUniformValue("u_mvpMatrix", mvpMatrix);
     shaderProgram->setUniformValue("u_modelMatrix", modelMatrix);
     shaderProgram->setUniformValue("u_viewMatrix", viewMatrix);
@@ -225,28 +228,31 @@ void GLWidget::resizeGL(int width, int height)
 
 void GLWidget::mousePressEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::LeftButton) {
-        lastMousePos = event->pos();
-        mousePressed = true;
-    }
+    lastMousePos = event->pos();
+    mousePressed = true;
+    mouseButton = event->button();
 }
 
 void GLWidget::mouseMoveEvent(QMouseEvent *event)
 {
-    if (mousePressed && (event->buttons() & Qt::LeftButton)) {
+    if (mousePressed) {
         QPoint delta = event->pos() - lastMousePos;
-        
-        // Convert mouse movement to rotation
-        float sensitivity = 0.5f;
-        rotationY += delta.x() * sensitivity;
-        rotationX += delta.y() * sensitivity;
-        
-        // Clamp rotations to reasonable range
-        while (rotationX > 360.0f) rotationX -= 360.0f;
-        while (rotationX < -360.0f) rotationX += 360.0f;
-        while (rotationY > 360.0f) rotationY -= 360.0f;
-        while (rotationY < -360.0f) rotationY += 360.0f;
-        
+        if (mouseButton == Qt::LeftButton) {
+            // Arcball or simple rotation
+            float sensitivity = 0.5f;
+            rotationY += delta.x() * sensitivity;
+            rotationX += delta.y() * sensitivity;
+            // Clamp rotations
+            while (rotationX > 360.0f) rotationX -= 360.0f;
+            while (rotationX < -360.0f) rotationX += 360.0f;
+            while (rotationY > 360.0f) rotationY -= 360.0f;
+            while (rotationY < -360.0f) rotationY += 360.0f;
+        } else if (mouseButton == Qt::RightButton && camera) {
+            // Pan: convert delta to world space
+            float panX = float(delta.x());
+            float panY = float(-delta.y());
+            camera->pan(panX, panY);
+        }
         lastMousePos = event->pos();
         update();
     }
@@ -254,20 +260,22 @@ void GLWidget::mouseMoveEvent(QMouseEvent *event)
 
 void GLWidget::mouseReleaseEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::LeftButton) {
-        mousePressed = false;
-    }
+    mousePressed = false;
+    mouseButton = Qt::NoButton;
 }
 
 void GLWidget::wheelEvent(QWheelEvent *event)
 {
-    // Zoom with mouse wheel
-    float delta = event->angleDelta().y() / 120.0f; // Standard wheel step
+    // Zoom with mouse wheel (camera-based)
+    float delta = event->angleDelta().y() / 120.0f;
     float zoomSpeed = 0.1f;
-    
-    zoomFactor += delta * zoomSpeed;
-    zoomFactor = qMax(0.1f, qMin(10.0f, zoomFactor)); // Clamp zoom
-    
+    if (camera) {
+        float factor = 1.0f - delta * zoomSpeed * 0.1f;
+        camera->zoom(factor);
+    } else {
+        zoomFactor += delta * zoomSpeed;
+        zoomFactor = qMax(0.1f, qMin(10.0f, zoomFactor));
+    }
     update();
 }
 

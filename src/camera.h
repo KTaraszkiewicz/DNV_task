@@ -71,8 +71,10 @@ private:
     QVector3D right;
     
     // Projection parameters
-    float fov;          // Field of view in degrees
+public:
     float aspect;       // Aspect ratio
+private:
+    float fov;          // Field of view in degrees
     float nearPlane;    // Near clipping plane
     float farPlane;     // Far clipping plane
     
