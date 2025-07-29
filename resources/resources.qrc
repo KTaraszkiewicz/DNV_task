@@ -1,0 +1,15 @@
+<!DOCTYPE RCC><RCC version="1.0">
+    <qresource prefix="/icons">
+        <file>icons/open.png</file>
+        <file>icons/exit.png</file>
+        <file>icons/reset.png</file>
+        <file>icons/fit.png</file>
+        <file>icons/wireframe.png</file>
+        <file>icons/lighting.png</file>
+        <file>icons/app.png</file>
+    </qresource>
+    <qresource prefix="/shaders">
+        <file>shaders/vertex.glsl</file>
+        <file>shaders/fragment.glsl</file>
+    </qresource>
+</RCC>
