@@ -146,7 +146,7 @@ private:
     // Utility functions
     void setError(const QString& error);
     bool isValidTriangle(const STLTriangle& triangle);
-    int findOrAddVertex(const STLVertex& vertex);
+    int findOrAddVertex(QVector<STLVertex>& uniqueVertices, const STLVertex& vertex);
     bool verticesEqual(const STLVertex& a, const STLVertex& b, float tolerance);
     
     // Parsing helpers for ASCII

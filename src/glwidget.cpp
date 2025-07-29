@@ -1,5 +1,15 @@
+#include "glwidget.h"
 #include "camera.h"
 #include <QCursor>
+#include <QFileInfo>
+#include "stlloader.h"
+#include <QMouseEvent>
+#include <QWheelEvent>
+#include <QOpenGLShaderProgram>
+#include <QMatrix4x4>
+#include <QtMath>
+#include <QDebug>
+#include <QApplication>
 
 // Helper for arcball mapping
 static QVector3D mapToArcball(int x, int y, int w, int h) {
@@ -9,15 +19,6 @@ static QVector3D mapToArcball(int x, int y, int w, int h) {
     float z = length2 > 1.0f ? 0.0f : sqrtf(1.0f - length2);
     return QVector3D(nx, ny, z).normalized();
 }
-#include "glwidget.h"
-#include <QFileInfo>
-#include "stlloader.h"
-#include <QMouseEvent>
-#include <QWheelEvent>
-#include <QOpenGLShaderProgram>
-#include <QMatrix4x4>
-#include <QtMath>
-#include <QDebug>
 
 GLWidget::GLWidget(QWidget *parent)
     : QOpenGLWidget(parent)
@@ -33,67 +34,39 @@ GLWidget::GLWidget(QWidget *parent)
     , triangleCount(0)
     , hasModel(false)
     , boundingBoxValid(false)
+    , camera(nullptr)
+    , isInitialized(false)
 {
-    camera = new Camera();
-    
-    // Enable multisampling for better quality
+    // Set OpenGL format before creating the widget
     QSurfaceFormat format;
-    format.setSamples(4);
     format.setDepthBufferSize(24);
+    format.setStencilBufferSize(8);
     format.setVersion(3, 3);
     format.setProfile(QSurfaceFormat::CoreProfile);
+    format.setSamples(4); // Enable multisampling for better quality
     setFormat(format);
     
     // Set focus policy to receive key events
     setFocusPolicy(Qt::StrongFocus);
     
-    // Animation timer for smooth rendering
-    connect(&renderTimer, &QTimer::timeout, this, QOverload<>::of(&GLWidget::update));
-    renderTimer.start(16); // ~60 FPS
-    
-    // Add connection with proper cleanup on destruction
-    connect(this, &QObject::destroyed, [this]() {
-        renderTimer.stop();
-    });
-}
+    // Don't create camera tutaj - czekaj na kontekst OpenGL
 
-void GLWidget::initializeGL()
-{
-    initializeOpenGLFunctions();
-
-    // Enable depth testing
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
-    
-    // Enable back-face culling
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
-    glFrontFace(GL_CCW);
-
-    // Enable multisampling
-    glEnable(GL_MULTISAMPLE);
-
-    // Set clear color
-    glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
-
-    // Set up shaders
-    setupShaders();
-
-    // Create cube as default geometry
-    setupDefaultGeometry();
-
-    // Initialize matrices
-    modelMatrix.setToIdentity();
-    viewMatrix.setToIdentity();
-    viewMatrix.lookAt(QVector3D(0, 0, 5), QVector3D(0, 0, 0), QVector3D(0, 1, 0));
+    // Ustaw domyślny kolor (jasnoszary)
+    defaultColor = QVector3D(0.8f, 0.8f, 0.8f);
 }
 
 GLWidget::~GLWidget()
 {
-    // Stop the timer first to prevent any further updates
+    // Ensure proper cleanup
+    cleanup();
+}
+
+void GLWidget::cleanup()
+{
+    // Stop any timers first
     renderTimer.stop();
     
-    // Make sure we have a valid OpenGL context before cleanup
+    // Make sure we have a valid context before cleanup
     if (context() && context()->isValid()) {
         makeCurrent();
         
@@ -125,12 +98,67 @@ GLWidget::~GLWidget()
         delete camera;
         camera = nullptr;
     }
+    
+    isInitialized = false;
+}
+
+void GLWidget::initializeGL()
+{
+    // Initialize OpenGL functions
+    initializeOpenGLFunctions();
+
+    // Check OpenGL version
+    QString glVersion = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+    qDebug() << "OpenGL Version:" << glVersion;
+
+    // Enable depth testing
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    
+    // Enable back-face culling
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CCW);
+
+    // Enable multisampling if available
+    if (format().samples() > 1) {
+        glEnable(GL_MULTISAMPLE);
+    }
+
+    // Set clear color
+    glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
+
+    // Set up shaders
+    if (!setupShaders()) {
+        qCritical() << "Failed to setup shaders";
+        return;
+    }
+
+    // Create camera now that we have OpenGL context
+    camera = new Camera();
+    camera->setPerspective(45.0f, float(width()) / float(height()), 0.1f, 100.0f);
+
+    // Create cube as default geometry
+    setupDefaultGeometry();
+
+    // Initialize matrices
+    modelMatrix.setToIdentity();
+    viewMatrix.setToIdentity();
+    viewMatrix.lookAt(QVector3D(0, 0, 5), QVector3D(0, 0, 0), QVector3D(0, 1, 0));
+
+    // Start animation timer AFTER initialization
+    connect(&renderTimer, &QTimer::timeout, this, QOverload<>::of(&GLWidget::update));
+    renderTimer.start(16); // ~60 FPS
+    
+    isInitialized = true;
+    
+    qDebug() << "OpenGL initialized successfully";
 }
 
 void GLWidget::paintGL()
 {
-
-     if (!context() || !context()->isValid()) {
+    // Ensure we're initialized and have valid context
+    if (!isInitialized || !context() || !context()->isValid()) {
         return;
     }
 
@@ -158,6 +186,7 @@ void GLWidget::paintGL()
         viewMatrix = camera->getViewMatrix();
         projectionMatrix = camera->getProjectionMatrix();
     }
+    
     modelMatrix.setToIdentity();
     modelMatrix.scale(zoomFactor);
     modelMatrix.rotate(rotationX, 1, 0, 0);
@@ -167,16 +196,17 @@ void GLWidget::paintGL()
     QMatrix4x4 mvpMatrix = projectionMatrix * viewMatrix * modelMatrix;
     QMatrix4x4 normalMatrix = modelMatrix.inverted().transposed();
 
+    // Set shader uniforms
     shaderProgram->setUniformValue("u_mvpMatrix", mvpMatrix);
     shaderProgram->setUniformValue("u_modelMatrix", modelMatrix);
+    shaderProgram->setUniformValue("u_color", defaultColor);
     shaderProgram->setUniformValue("u_viewMatrix", viewMatrix);
     shaderProgram->setUniformValue("u_normalMatrix", normalMatrix);
 
     // Lighting uniforms
-    // Directional light (sun)
     shaderProgram->setUniformValue("u_lightDir", QVector3D(-0.5f, -1.0f, -0.3f));
     shaderProgram->setUniformValue("u_lightColor", QVector3D(1.0f, 1.0f, 1.0f));
-    // Point light (headlight)
+    
     if (camera) {
         shaderProgram->setUniformValue("u_lightPos", camera->getPosition());
         shaderProgram->setUniformValue("u_viewPos", camera->getPosition());
@@ -184,48 +214,32 @@ void GLWidget::paintGL()
         shaderProgram->setUniformValue("u_lightPos", QVector3D(0.0f, 0.0f, 5.0f));
         shaderProgram->setUniformValue("u_viewPos", QVector3D(0.0f, 0.0f, 5.0f));
     }
-    // Ambient light
+    
     shaderProgram->setUniformValue("u_ambientStrength", 0.2f);
+    shaderProgram->setUniformValue("u_specularStrength", 0.5f);
+    shaderProgram->setUniformValue("u_shininess", 32.0f);
 
     // Material uniforms
-    shaderProgram->setUniformValue("u_materialColor", QVector3D(0.8f, 0.8f, 0.8f)); // base color
-    shaderProgram->setUniformValue("u_specularStrength", 0.5f);
-    shaderProgram->setUniformValue("u_shininess", 32.0f);
-
-    // Rendering mode uniforms
+    QVector3D materialColor = hasModel ? QVector3D(0.8f, 0.8f, 0.9f) : QVector3D(0.7f, 0.3f, 0.3f);
+    shaderProgram->setUniformValue("u_materialColor", materialColor);
     shaderProgram->setUniformValue("u_wireframe", wireframeMode);
     shaderProgram->setUniformValue("u_lightingEnabled", lightingEnabled);
-    shaderProgram->setUniformValue("u_normalMatrix", normalMatrix);
-    shaderProgram->setUniformValue("u_viewPos", QVector3D(0, 0, 5));
-    shaderProgram->setUniformValue("u_lightingEnabled", lightingEnabled);
-    shaderProgram->setUniformValue("u_wireframe", wireframeMode);
     
-    // Light properties
-    shaderProgram->setUniformValue("u_lightPos", QVector3D(10, 10, 10));
-    shaderProgram->setUniformValue("u_lightColor", QVector3D(1.0f, 1.0f, 1.0f));
-    shaderProgram->setUniformValue("u_ambientStrength", 0.3f);
+    // Additional lighting parameters
     shaderProgram->setUniformValue("u_diffuseStrength", 0.7f);
-    shaderProgram->setUniformValue("u_specularStrength", 0.5f);
-    shaderProgram->setUniformValue("u_shininess", 32.0f);
-    
-    // Light attenuation parameters
     shaderProgram->setUniformValue("u_lightConstant", 1.0f);
     shaderProgram->setUniformValue("u_lightLinear", 0.09f);
     shaderProgram->setUniformValue("u_lightQuadratic", 0.032f);
-    
-    // Material properties for PBR-style rendering
-    QVector3D materialColor = hasModel ? QVector3D(0.8f, 0.8f, 0.9f) : QVector3D(0.7f, 0.3f, 0.3f);
-    shaderProgram->setUniformValue("u_materialColor", materialColor);
-    shaderProgram->setUniformValue("u_metallic", 0.1f);      // Slightly metallic
-    shaderProgram->setUniformValue("u_roughness", 0.5f);     // Medium roughness
-    shaderProgram->setUniformValue("u_ao", 1.0f);            // No ambient occlusion
+    shaderProgram->setUniformValue("u_metallic", 0.1f);
+    shaderProgram->setUniformValue("u_roughness", 0.5f);
+    shaderProgram->setUniformValue("u_ao", 1.0f);
     
     // Bind VAO and draw
     vao.bind();
     
     if (hasModel && !indices.isEmpty()) {
-        // Draw indexed geometry
-        glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
+        // Draw indexed geometry - fixed size_t to int conversion
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, 0);
     } else {
         // Draw non-indexed geometry
         glDrawArrays(GL_TRIANGLES, 0, triangleCount * 3);
@@ -262,17 +276,18 @@ void GLWidget::mouseMoveEvent(QMouseEvent *event)
     if (mousePressed) {
         QPoint delta = event->pos() - lastMousePos;
         if (mouseButton == Qt::LeftButton) {
-            // Arcball or simple rotation
+            // Simple rotation
             float sensitivity = 0.5f;
             rotationY += delta.x() * sensitivity;
             rotationX += delta.y() * sensitivity;
+            
             // Clamp rotations
             while (rotationX > 360.0f) rotationX -= 360.0f;
             while (rotationX < -360.0f) rotationX += 360.0f;
             while (rotationY > 360.0f) rotationY -= 360.0f;
             while (rotationY < -360.0f) rotationY += 360.0f;
         } else if (mouseButton == Qt::RightButton && camera) {
-            // Pan: convert delta to world space
+            // Pan
             float panX = float(delta.x());
             float panY = float(-delta.y());
             camera->pan(panX, panY);
@@ -284,15 +299,17 @@ void GLWidget::mouseMoveEvent(QMouseEvent *event)
 
 void GLWidget::mouseReleaseEvent(QMouseEvent *event)
 {
+    Q_UNUSED(event)
     mousePressed = false;
     mouseButton = Qt::NoButton;
 }
 
 void GLWidget::wheelEvent(QWheelEvent *event)
 {
-    // Zoom with mouse wheel (camera-based)
+    // Zoom with mouse wheel
     float delta = event->angleDelta().y() / 120.0f;
     float zoomSpeed = 0.1f;
+    
     if (camera) {
         float factor = 1.0f - delta * zoomSpeed * 0.1f;
         camera->zoom(factor);
@@ -303,9 +320,9 @@ void GLWidget::wheelEvent(QWheelEvent *event)
     update();
 }
 
-void GLWidget::setupShaders()
+bool GLWidget::setupShaders()
 {
-    // Vertex shader source - enhanced with more lighting calculations
+    // Enhanced vertex shader
     const char* vertexShaderSource = R"(
         #version 330 core
         
@@ -343,7 +360,7 @@ void GLWidget::setupShaders()
         }
     )";
     
-    // Fragment shader source - enhanced with Blinn-Phong and attenuation
+    // Enhanced fragment shader
     const char* fragmentShaderSource = R"(
         #version 330 core
         
@@ -417,6 +434,7 @@ void GLWidget::setupShaders()
                 finalColor = litColor;
             }
             
+            // Gamma correction
             float gamma = 2.2;
             finalColor = pow(finalColor, vec3(1.0/gamma));
             
@@ -428,19 +446,21 @@ void GLWidget::setupShaders()
     shaderProgram = new QOpenGLShaderProgram(this);
     
     if (!shaderProgram->addShaderFromSourceCode(QOpenGLShader::Vertex, vertexShaderSource)) {
-        qWarning() << "Failed to compile vertex shader:" << shaderProgram->log();
-        return;
+        qCritical() << "Failed to compile vertex shader:" << shaderProgram->log();
+        return false;
     }
     
     if (!shaderProgram->addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentShaderSource)) {
-        qWarning() << "Failed to compile fragment shader:" << shaderProgram->log();
-        return;
+        qCritical() << "Failed to compile fragment shader:" << shaderProgram->log();
+        return false;
     }
     
     if (!shaderProgram->link()) {
-        qWarning() << "Failed to link shader program:" << shaderProgram->log();
-        return;
+        qCritical() << "Failed to link shader program:" << shaderProgram->log();
+        return false;
     }
+    
+    return true;
 }
 
 void GLWidget::setupDefaultGeometry()
@@ -504,14 +524,20 @@ void GLWidget::setupDefaultGeometry()
 
 void GLWidget::setupVertexBuffer(const QVector<float>& vertexData)
 {
+    makeCurrent();
+    
 
-    // Check if context is valid
+    if (vertexBuffer.isCreated()) vertexBuffer.destroy();
+    if (indexBuffer.isCreated()) indexBuffer.destroy();
+    if (vao.isCreated()) vao.destroy();
+
+    // Add proper context validation
     if (!context() || !context()->isValid()) {
+        qWarning() << "OpenGL context not available during vertex buffer setup";
+        doneCurrent();
         return;
     }
 
-    makeCurrent();
-    
     // Calculate bounding box for loaded models
     if (hasModel) {
         calculateBoundingBox(vertexData);
@@ -521,39 +547,80 @@ void GLWidget::setupVertexBuffer(const QVector<float>& vertexData)
     
     // Create VAO
     if (!vao.isCreated()) {
-        vao.create();
+        if (!vao.create()) {
+            qCritical() << "Failed to create VAO";
+            doneCurrent();
+            return;
+        }
     }
     vao.bind();
-    
+
     // Create VBO
     if (!vertexBuffer.isCreated()) {
-        vertexBuffer.create();
+        if (!vertexBuffer.create()) {
+            qCritical() << "Failed to create vertex buffer";
+            vao.release();
+            doneCurrent();
+            return;
+        }
     }
-    vertexBuffer.bind();
-    vertexBuffer.allocate(vertexData.data(), vertexData.size() * sizeof(float));
     
+    vertexBuffer.bind();
+    vertexBuffer.allocate(vertexData.data(), static_cast<int>(vertexData.size() * sizeof(float)));
+
     // Set up vertex attributes
-    // Position attribute (location = 0)
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
     
-    // Normal attribute (location = 1)
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
     
-    vao.release();
+    // Set up index buffer if we have indices
+    if (hasModel && !indices.isEmpty()) {
+        if (!indexBuffer.isCreated()) {
+            if (!indexBuffer.create()) {
+                qCritical() << "Failed to create index buffer";
+                vao.release();
+                vertexBuffer.release();
+                doneCurrent();
+                return;
+            }
+        }
+        
+        indexBuffer.bind();
+        indexBuffer.allocate(indices.data(), static_cast<int>(indices.size() * sizeof(unsigned int)));
+    }
+    
+    // Release buffers and VAO
+    if (indexBuffer.isCreated()) {
+        indexBuffer.release();
+    }
     vertexBuffer.release();
+    vao.release();
     
     doneCurrent();
+    
+    qDebug() << "Vertex buffer setup complete. Vertices:" << vertexData.size() / 6;
 }
 
-// Public interface methods
+// FIXED: File loading now runs on main thread with proper error handling
 void GLWidget::loadSTLFile(const QString &fileName)
 {
+
+    cleanupModel();
+
+    if (!isInitialized || !context() || !context()->isValid()) {
+        qWarning() << "OpenGL not initialized, cannot load STL file";
+        return;
+    }
+    qDebug() << "Loading STL file:" << fileName;
+    
+    // Create loader and configure it
     STLLoader loader;
     loader.setAutoCenter(true);
     loader.setAutoNormalize(true);
     
+    // Load the file (this is the critical fix - ensure this runs on main thread)
     STLLoader::LoadResult result = loader.loadFile(fileName);
     
     if (result == STLLoader::Success) {
@@ -561,12 +628,16 @@ void GLWidget::loadSTLFile(const QString &fileName)
         const QVector<float>& vertexData = loader.getVertexData();
         const QVector<unsigned int>& indexData = loader.getIndices();
         
+        if (vertexData.isEmpty()) {
+            qWarning() << "STL file loaded but contains no vertex data";
+            return;
+        }
+        
         triangleCount = loader.getTriangleCount();
         hasModel = true;
         indices = indexData;
         
-        // Set up vertex buffer with STL data (this will calculate bounding box)
-        setupVertexBuffer(vertexData);
+        qDebug() << "STL loaded successfully. Triangles:" << triangleCount << "Vertices:" << loader.getVertexCount();
         
         // Set up index buffer if available
         if (!indices.isEmpty()) {
@@ -574,10 +645,16 @@ void GLWidget::loadSTLFile(const QString &fileName)
             vao.bind();
             
             if (!indexBuffer.isCreated()) {
-                indexBuffer.create();
+                if (!indexBuffer.create()) {
+                    qCritical() << "Failed to create index buffer";
+                    vao.release();
+                    doneCurrent();
+                    return;
+                }
             }
+            
             indexBuffer.bind();
-            indexBuffer.allocate(indices.data(), indices.size() * sizeof(unsigned int));
+            indexBuffer.allocate(indices.data(), static_cast<int>(indices.size() * sizeof(unsigned int)));
             
             vao.release();
             doneCurrent();
@@ -587,9 +664,14 @@ void GLWidget::loadSTLFile(const QString &fileName)
         fitToWindow();
         
         emit fileLoaded(QFileInfo(fileName).fileName(), triangleCount, loader.getVertexCount());
+        
+        // Force an update
+        update();
+        
     } else {
-        qWarning() << "Failed to load STL file:" << loader.getErrorString();
-        // Keep showing the default cube
+        QString errorMsg = "Failed to load STL file: " + loader.getErrorString();
+        qWarning() << errorMsg;
+        // Keep showing the default cube on error
     }
 }
 
@@ -645,7 +727,7 @@ void GLWidget::centerModel()
     }
     
     if (boundingBoxValid && hasModel) {
-        // Just center the target on the model, keep current distance
+        // Center the target on the model, keep current distance
         QVector3D currentPos = camera->getPosition();
         QVector3D currentTarget = camera->getTarget();
         QVector3D offset = currentPos - currentTarget;
@@ -660,6 +742,33 @@ void GLWidget::centerModel()
     update();
 }
 
+void GLWidget::cleanupModel()
+{
+    if (!isInitialized || !context() || !context()->isValid()) {
+        return;
+    }
+
+    makeCurrent();
+
+    // Clean up buffers
+    if (vertexBuffer.isCreated()) {
+        vertexBuffer.destroy();
+    }
+    if (indexBuffer.isCreated()) {
+        indexBuffer.destroy();
+    }
+    if (vao.isCreated()) {
+        vao.destroy();
+    }
+
+    doneCurrent();
+
+    // Reset model data
+    indices.clear();
+    triangleCount = 0;
+    hasModel = false;
+    boundingBoxValid = false;
+}
 
 void GLWidget::resetCamera()
 {
@@ -674,6 +783,7 @@ void GLWidget::resetCamera()
     
     update();
 }
+
 void GLWidget::fitToWindow()
 {
     if (!camera) {

@@ -142,11 +142,7 @@ void Camera::orbit(float horizontal, float vertical)
 
 void Camera::pan(float x, float y)
 {
-    // Pan: x and y are in screen space (pixels or normalized device coordinates)
-    // Convert to world space using camera axes and scale by distance to target
-    float distance = (target - position).length();
-    float panSpeed = distance * 0.002f; // scale factor, tweak as needed
-    QVector3D offset = (right * x + up * y) * panSpeed;
+    QVector3D offset = right * x + up * y;
     position += offset;
     target += offset;
     dirty = true;

@@ -1,3 +1,4 @@
+// glwidget.h - Fixed version with proper resource management
 #ifndef GLWIDGET_H
 #define GLWIDGET_H
 
@@ -24,7 +25,7 @@ public:
     void loadSTLFile(const QString &fileName);
     void resetCamera();
     void fitToWindow();
-    void centerModel();  // New method to center on model
+    void centerModel();
     void setWireframeMode(bool wireframe);
     void setLightingEnabled(bool enabled);
     void setZoom(float factor);
@@ -47,7 +48,10 @@ protected:
     void wheelEvent(QWheelEvent *event) override;
 
 private:
-    void setupShaders();
+    // Setup and cleanup methods
+    void cleanup();
+    void cleanupModel();
+    bool setupShaders();
     void setupDefaultGeometry();
     void setupVertexBuffer(const QVector<float>& vertexData);
     void calculateBoundingBox(const QVector<float>& vertexData);
@@ -89,6 +93,12 @@ private:
     
     // Rendering
     QTimer renderTimer;
+    
+    // State tracking
+    bool isInitialized;
+
+    // Default color for loaded STL object
+    QVector3D defaultColor;
 };
 
 #endif // GLWIDGET_H

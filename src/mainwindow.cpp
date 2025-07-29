@@ -1,3 +1,4 @@
+// mainwindow.cpp - Fixed version with better error handling
 #include "mainwindow.h"
 #include "../build/ui_mainwindow.h"
 #include "glwidget.h"
@@ -5,6 +6,9 @@
 #include <QMessageBox>
 #include <QFileInfo>
 #include <QDir>
+#include <QProgressDialog>
+#include <QThread>
+#include <QDebug>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -12,6 +16,7 @@ MainWindow::MainWindow(QWidget *parent)
     , glWidget(nullptr)
     , frameCount(0)
     , currentFileName("")
+    , frameRateTimer(nullptr)
 {
     ui->setupUi(this);
     
@@ -35,27 +40,37 @@ MainWindow::MainWindow(QWidget *parent)
     
     // Set initial status
     statusLabel->setText("Ready - Open an STL file to begin");
+    
+    qDebug() << "MainWindow: Initialized successfully";
 }
 
 MainWindow::~MainWindow()
 {
+    qDebug() << "MainWindow: Starting destruction...";
+    
     // Stop the frame rate timer first
     if (frameRateTimer) {
         frameRateTimer->stop();
+        frameRateTimer = nullptr;
     }
     
     // Clean up GL widget first (this will handle OpenGL cleanup properly)
     if (glWidget) {
+        qDebug() << "MainWindow: Cleaning up OpenGL widget...";
         glWidget->setParent(nullptr);  // Remove from parent to prevent double deletion
         delete glWidget;
         glWidget = nullptr;
     }
     
     delete ui;
+    
+    qDebug() << "MainWindow: Destruction complete";
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    qDebug() << "MainWindow: Close event received";
+    
     // Stop timers
     if (frameRateTimer) {
         frameRateTimer->stop();
@@ -128,8 +143,9 @@ void MainWindow::setupMenuBar()
             "A 3D model viewer for STL files\n"
             "Built with Qt6 and OpenGL\n\n"
             "Controls:\n"
-            "• Mouse: Rotate view\n"
-            "• Wheel: Zoom\n"
+            "• Left Mouse: Rotate view\n"
+            "• Right Mouse: Pan view\n"
+            "• Mouse Wheel: Zoom\n"
             "• Toolbar: Additional controls");
     });
 }
@@ -223,23 +239,6 @@ void MainWindow::setupCentralWidget()
     
     // Add the OpenGL widget
     mainLayout->addWidget(glWidget);
-    
-    // Optional: Add a control panel on the right
-    // This can be uncommented if you want side controls
-    /*
-    QHBoxLayout *contentLayout = new QHBoxLayout();
-    contentLayout->addWidget(glWidget, 4); // 80% of space
-    
-    // Control panel
-    QGroupBox *controlPanel = new QGroupBox("Controls");
-    controlPanel->setFixedWidth(200);
-    QVBoxLayout *controlLayout = new QVBoxLayout(controlPanel);
-    
-    // Add control widgets here if needed
-    
-    contentLayout->addWidget(controlPanel, 1); // 20% of space
-    mainLayout->addLayout(contentLayout);
-    */
 }
 
 void MainWindow::setupStatusBar()
@@ -283,6 +282,7 @@ void MainWindow::connectSignals()
     connect(rotationYSlider, &QSlider::valueChanged, this, &MainWindow::onRotationYChanged);
     connect(rotationZSlider, &QSlider::valueChanged, this, &MainWindow::onRotationZChanged);
 
+    // OpenGL widget connections
     if (glWidget) {
         connect(glWidget, &GLWidget::frameRendered, this, [this]{ frameCount++; });
         connect(glWidget, &GLWidget::fileLoaded, this, &MainWindow::updateFileInfo);
@@ -292,19 +292,57 @@ void MainWindow::connectSignals()
 // Slot implementations
 void MainWindow::openSTLFile()
 {
+    qDebug() << "MainWindow: Opening STL file dialog...";
+    
     QString fileName = QFileDialog::getOpenFileName(this,
         "Open STL File", 
         QDir::homePath(),
         "STL Files (*.stl);;All Files (*)");
 
-    if (!fileName.isEmpty() && glWidget) {
-        glWidget->loadSTLFile(fileName);
-        statusLabel->setText("File loaded successfully");
+    if (!fileName.isEmpty()) {
+        qDebug() << "MainWindow: Selected file:" << fileName;
+        
+        if (!glWidget) {
+            QMessageBox::critical(this, "Error", "OpenGL widget not initialized");
+            return;
+        }
+        
+        // Disable UI during loading
+        setEnabled(false);
+        statusLabel->setText("Loading STL file...");
+        QApplication::processEvents();
+        
+        try {
+            // Load the file (this should run on main thread)
+            glWidget->loadSTLFile(fileName);
+            currentFileName = fileName;
+            statusLabel->setText("File loaded successfully");
+            
+        } catch (const std::exception& e) {
+            QString errorMsg = QString("Error loading STL file: %1").arg(e.what());
+            QMessageBox::critical(this, "Load Error", errorMsg);
+            statusLabel->setText("Failed to load file");
+            qCritical() << errorMsg;
+            
+        } catch (...) {
+            QString errorMsg = "Unknown error occurred while loading STL file";
+            QMessageBox::critical(this, "Load Error", errorMsg);
+            statusLabel->setText("Failed to load file");
+            qCritical() << errorMsg;
+        }
+        
+        // Re-enable UI
+        setEnabled(true);
+        
+    } else {
+        qDebug() << "MainWindow: File dialog cancelled";
     }
 }
 
 void MainWindow::exitApplication()
 {
+    qDebug() << "MainWindow: Exit requested";
+    
     // Stop all timers first
     if (frameRateTimer) {
         frameRateTimer->stop();
@@ -324,6 +362,7 @@ void MainWindow::resetView()
         rotationYSlider->setValue(0);
         rotationZSlider->setValue(0);
         statusLabel->setText("View reset");
+        qDebug() << "MainWindow: View reset";
     }
 }
 
@@ -332,6 +371,7 @@ void MainWindow::fitToWindow()
     if (glWidget) {
         glWidget->fitToWindow();
         statusLabel->setText("Fitted to window");
+        qDebug() << "MainWindow: Fitted to window";
     }
 }
 
@@ -341,6 +381,7 @@ void MainWindow::toggleWireframe()
         bool wireframe = wireframeAction->isChecked();
         glWidget->setWireframeMode(wireframe);
         statusLabel->setText(wireframe ? "Wireframe mode enabled" : "Wireframe mode disabled");
+        qDebug() << "MainWindow: Wireframe mode" << (wireframe ? "enabled" : "disabled");
     }
 }
 
@@ -350,6 +391,7 @@ void MainWindow::toggleLighting()
         bool lighting = lightingAction->isChecked();
         glWidget->setLightingEnabled(lighting);
         statusLabel->setText(lighting ? "Lighting enabled" : "Lighting disabled");
+        qDebug() << "MainWindow: Lighting" << (lighting ? "enabled" : "disabled");
     }
 }
 
@@ -384,8 +426,10 @@ void MainWindow::onRotationZChanged(int value)
 
 void MainWindow::updateFrameRate()
 {
-    frameRateLabel->setText(QString("FPS: %1").arg(frameCount));
-    frameCount = 0;
+    if (frameRateLabel) {
+        frameRateLabel->setText(QString("FPS: %1").arg(frameCount));
+        frameCount = 0;
+    }
 }
 
 void MainWindow::updateFileInfo(const QString& filename, int triangles, int vertices)
@@ -394,5 +438,10 @@ void MainWindow::updateFileInfo(const QString& filename, int triangles, int vert
                    .arg(filename)
                    .arg(triangles)
                    .arg(vertices);
-    fileInfoLabel->setText(info);
+    
+    if (fileInfoLabel) {
+        fileInfoLabel->setText(info);
+    }
+    
+    qDebug() << "MainWindow: File info updated:" << info;
 }
