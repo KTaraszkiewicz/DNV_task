@@ -32,6 +32,7 @@ GLWidget::GLWidget(QWidget *parent)
     , mouseButton(Qt::NoButton)
     , triangleCount(0)
     , hasModel(false)
+    , boundingBoxValid(false)
 {
     camera = new Camera();
     // Enable multisampling for better quality
@@ -482,6 +483,13 @@ void GLWidget::setupVertexBuffer(const QVector<float>& vertexData)
 {
     makeCurrent();
     
+    // Calculate bounding box for loaded models
+    if (hasModel) {
+        calculateBoundingBox(vertexData);
+    } else {
+        boundingBoxValid = false;
+    }
+    
     // Create VAO
     if (!vao.isCreated()) {
         vao.create();
@@ -528,7 +536,7 @@ void GLWidget::loadSTLFile(const QString &fileName)
         hasModel = true;
         indices = indexData;
         
-        // Set up vertex buffer with STL data
+        // Set up vertex buffer with STL data (this will calculate bounding box)
         setupVertexBuffer(vertexData);
         
         // Set up index buffer if available
@@ -546,9 +554,8 @@ void GLWidget::loadSTLFile(const QString &fileName)
             doneCurrent();
         }
         
-        // Reset view to show the model
-        resetCamera();
-        update();
+        // Automatically fit the model to window after loading
+        fitToWindow();
         
         emit fileLoaded(QFileInfo(fileName).fileName(), triangleCount, loader.getVertexCount());
     } else {
@@ -557,18 +564,134 @@ void GLWidget::loadSTLFile(const QString &fileName)
     }
 }
 
-void GLWidget::resetCamera()
+void GLWidget::calculateBoundingBox(const QVector<float>& vertexData)
 {
-    zoomFactor = 1.0f;
-    rotationX = rotationY = rotationZ = 0.0f;
+    if (vertexData.isEmpty()) {
+        boundingBoxValid = false;
+        return;
+    }
+    
+    // Initialize with first vertex
+    modelMin = QVector3D(vertexData[0], vertexData[1], vertexData[2]);
+    modelMax = modelMin;
+    
+    // Iterate through all vertices (stride of 6: position + normal)
+    for (int i = 0; i < vertexData.size(); i += 6) {
+        QVector3D vertex(vertexData[i], vertexData[i + 1], vertexData[i + 2]);
+        
+        // Update min bounds
+        modelMin.setX(qMin(modelMin.x(), vertex.x()));
+        modelMin.setY(qMin(modelMin.y(), vertex.y()));
+        modelMin.setZ(qMin(modelMin.z(), vertex.z()));
+        
+        // Update max bounds
+        modelMax.setX(qMax(modelMax.x(), vertex.x()));
+        modelMax.setY(qMax(modelMax.y(), vertex.y()));
+        modelMax.setZ(qMax(modelMax.z(), vertex.z()));
+    }
+    
+    // Calculate center and radius
+    modelCenter = (modelMin + modelMax) * 0.5f;
+    
+    // Calculate the maximum extent from center
+    QVector3D extent = modelMax - modelMin;
+    modelRadius = qMax(extent.x(), qMax(extent.y(), extent.z())) * 0.5f;
+    
+    // Add small padding
+    modelRadius *= 1.1f;
+    
+    boundingBoxValid = true;
+    
+    qDebug() << "Model bounds calculated:";
+    qDebug() << "  Min:" << modelMin;
+    qDebug() << "  Max:" << modelMax;
+    qDebug() << "  Center:" << modelCenter;
+    qDebug() << "  Radius:" << modelRadius;
+}
+
+void GLWidget::centerModel()
+{
+    if (!camera) {
+        return;
+    }
+    
+    if (boundingBoxValid && hasModel) {
+        // Just center the target on the model, keep current distance
+        QVector3D currentPos = camera->getPosition();
+        QVector3D currentTarget = camera->getTarget();
+        QVector3D offset = currentPos - currentTarget;
+        
+        camera->setTarget(modelCenter);
+        camera->setPosition(modelCenter + offset);
+    } else {
+        // Default centering
+        camera->setTarget(QVector3D(0, 0, 0));
+    }
+    
     update();
 }
 
+
+void GLWidget::resetCamera()
+{
+    // Reset the Camera object to its default state
+    if (camera) {
+        camera->reset();
+    }
+    
+    // Reset the old rotation and zoom variables
+    zoomFactor = 1.0f;
+    rotationX = rotationY = rotationZ = 0.0f;
+    
+    update();
+}
 void GLWidget::fitToWindow()
 {
-    // This would require calculating the model's bounding box
-    // For now, just reset the zoom
+    if (!camera) {
+        return;
+    }
+    
+    // Reset camera first
+    camera->reset();
+    rotationX = rotationY = rotationZ = 0.0f;
     zoomFactor = 1.0f;
+    
+    if (!boundingBoxValid || !hasModel) {
+        // Just reset for default cube or invalid bounds
+        update();
+        return;
+    }
+    
+    // Calculate optimal camera distance
+    float fovRadians = qDegreesToRadians(camera->getFov());
+    float aspectRatio = float(width()) / float(height() ? height() : 1);
+    
+    // Calculate distance needed to fit the model
+    float distance;
+    if (aspectRatio >= 1.0f) {
+        // Landscape or square - fit to height
+        distance = modelRadius / tanf(fovRadians * 0.5f);
+    } else {
+        // Portrait - fit to width, accounting for aspect ratio
+        float horizontalFov = 2.0f * atanf(tanf(fovRadians * 0.5f) * aspectRatio);
+        distance = modelRadius / tanf(horizontalFov * 0.5f);
+    }
+    
+    // Add some padding
+    distance *= 1.2f;
+    
+    // Position camera to look at model center
+    QVector3D cameraPos = modelCenter + QVector3D(0, 0, distance);
+    
+    camera->setPosition(cameraPos);
+    camera->setTarget(modelCenter);
+    camera->setUp(QVector3D(0, 1, 0));
+    
+    qDebug() << "Camera fitted to model:";
+    qDebug() << "  Position:" << cameraPos;
+    qDebug() << "  Target:" << modelCenter;
+    qDebug() << "  Distance:" << distance;
+    
     update();
 }
 

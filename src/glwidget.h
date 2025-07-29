@@ -9,6 +9,7 @@
 #include <QMatrix4x4>
 #include <QTimer>
 #include <QVector>
+#include <QVector3D>
 #include "camera.h"
 
 class GLWidget : public QOpenGLWidget, protected QOpenGLFunctions
@@ -23,6 +24,7 @@ public:
     void loadSTLFile(const QString &fileName);
     void resetCamera();
     void fitToWindow();
+    void centerModel();  // New method to center on model
     void setWireframeMode(bool wireframe);
     void setLightingEnabled(bool enabled);
     void setZoom(float factor);
@@ -48,6 +50,7 @@ private:
     void setupShaders();
     void setupDefaultGeometry();
     void setupVertexBuffer(const QVector<float>& vertexData);
+    void calculateBoundingBox(const QVector<float>& vertexData);
     
     // OpenGL objects
     QOpenGLShaderProgram *shaderProgram;
@@ -71,10 +74,18 @@ private:
     bool mousePressed;
     Qt::MouseButton mouseButton;
     Camera *camera;
+    
     // Model data
     QVector<unsigned int> indices;
     int triangleCount;
     bool hasModel;
+    
+    // Bounding box data
+    QVector3D modelMin;
+    QVector3D modelMax;
+    QVector3D modelCenter;
+    float modelRadius;
+    bool boundingBoxValid;
     
     // Rendering
     QTimer renderTimer;
