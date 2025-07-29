@@ -39,7 +39,39 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    // Stop the frame rate timer first
+    if (frameRateTimer) {
+        frameRateTimer->stop();
+    }
+    
+    // Clean up GL widget first (this will handle OpenGL cleanup properly)
+    if (glWidget) {
+        glWidget->setParent(nullptr);  // Remove from parent to prevent double deletion
+        delete glWidget;
+        glWidget = nullptr;
+    }
+    
     delete ui;
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    // Stop timers
+    if (frameRateTimer) {
+        frameRateTimer->stop();
+    }
+    
+    // Clean up OpenGL widget before closing
+    if (glWidget) {
+        // Make sure rendering stops
+        glWidget->setParent(nullptr);
+    }
+    
+    // Accept the close event
+    event->accept();
+    
+    // Call parent implementation
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::createActions()
@@ -273,7 +305,13 @@ void MainWindow::openSTLFile()
 
 void MainWindow::exitApplication()
 {
-    QApplication::quit();
+    // Stop all timers first
+    if (frameRateTimer) {
+        frameRateTimer->stop();
+    }
+    
+    // Clean shutdown
+    close();
 }
 
 void MainWindow::resetView()

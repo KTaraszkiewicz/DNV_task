@@ -35,6 +35,7 @@ GLWidget::GLWidget(QWidget *parent)
     , boundingBoxValid(false)
 {
     camera = new Camera();
+    
     // Enable multisampling for better quality
     QSurfaceFormat format;
     format.setSamples(4);
@@ -49,12 +50,21 @@ GLWidget::GLWidget(QWidget *parent)
     // Animation timer for smooth rendering
     connect(&renderTimer, &QTimer::timeout, this, QOverload<>::of(&GLWidget::update));
     renderTimer.start(16); // ~60 FPS
+    
+    // Add connection with proper cleanup on destruction
+    connect(this, &QObject::destroyed, [this]() {
+        renderTimer.stop();
+    });
 }
+
 void GLWidget::initializeGL()
 {
     initializeOpenGLFunctions();
 
+    // Enable depth testing
+    glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
+    
     // Enable back-face culling
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
@@ -62,6 +72,9 @@ void GLWidget::initializeGL()
 
     // Enable multisampling
     glEnable(GL_MULTISAMPLE);
+
+    // Set clear color
+    glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
 
     // Set up shaders
     setupShaders();
@@ -77,40 +90,50 @@ void GLWidget::initializeGL()
 
 GLWidget::~GLWidget()
 {
-    makeCurrent();
-    if (shaderProgram) { /* ...existing code... */ }
-    vertexBuffer.destroy();
-    vao.destroy();
-    delete camera;
-    doneCurrent();
-    vao.destroy();
-    initializeOpenGLFunctions();
-
-
-    glDepthFunc(GL_LESS);
+    // Stop the timer first to prevent any further updates
+    renderTimer.stop();
     
-    // Enable back-face culling
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
-    glFrontFace(GL_CCW);
+    // Make sure we have a valid OpenGL context before cleanup
+    if (context() && context()->isValid()) {
+        makeCurrent();
+        
+        // Clean up OpenGL resources
+        if (shaderProgram) {
+            delete shaderProgram;
+            shaderProgram = nullptr;
+        }
+        
+        // Clean up buffers
+        if (vertexBuffer.isCreated()) {
+            vertexBuffer.destroy();
+        }
+        
+        if (indexBuffer.isCreated()) {
+            indexBuffer.destroy();
+        }
+        
+        // Clean up VAO
+        if (vao.isCreated()) {
+            vao.destroy();
+        }
+        
+        doneCurrent();
+    }
     
-    // Enable multisampling
-    glEnable(GL_MULTISAMPLE);
-    
-    // Set up shaders
-    setupShaders();
-    
-    // Create cube as default geometry
-    setupDefaultGeometry();
-    
-    // Initialize matrices
-    modelMatrix.setToIdentity();
-    viewMatrix.setToIdentity();
-    viewMatrix.lookAt(QVector3D(0, 0, 5), QVector3D(0, 0, 0), QVector3D(0, 1, 0));
+    // Clean up camera
+    if (camera) {
+        delete camera;
+        camera = nullptr;
+    }
 }
 
 void GLWidget::paintGL()
 {
+
+     if (!context() || !context()->isValid()) {
+        return;
+    }
+
     // Clear buffers
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
@@ -481,6 +504,12 @@ void GLWidget::setupDefaultGeometry()
 
 void GLWidget::setupVertexBuffer(const QVector<float>& vertexData)
 {
+
+    // Check if context is valid
+    if (!context() || !context()->isValid()) {
+        return;
+    }
+
     makeCurrent();
     
     // Calculate bounding box for loaded models
