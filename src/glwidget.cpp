@@ -49,6 +49,30 @@ GLWidget::GLWidget(QWidget *parent)
     connect(&renderTimer, &QTimer::timeout, this, QOverload<>::of(&GLWidget::update));
     renderTimer.start(16); // ~60 FPS
 }
+void GLWidget::initializeGL()
+{
+    initializeOpenGLFunctions();
+
+    glDepthFunc(GL_LESS);
+    // Enable back-face culling
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CCW);
+
+    // Enable multisampling
+    glEnable(GL_MULTISAMPLE);
+
+    // Set up shaders
+    setupShaders();
+
+    // Create cube as default geometry
+    setupDefaultGeometry();
+
+    // Initialize matrices
+    modelMatrix.setToIdentity();
+    viewMatrix.setToIdentity();
+    viewMatrix.lookAt(QVector3D(0, 0, 5), QVector3D(0, 0, 0), QVector3D(0, 1, 0));
+}
 
 GLWidget::~GLWidget()
 {
