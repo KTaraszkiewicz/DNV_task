@@ -10,6 +10,7 @@
 #include <QtMath>
 #include <QDebug>
 #include <QApplication>
+#include <iostream>
 
 // Helper for arcball mapping
 static QVector3D mapToArcball(int x, int y, int w, int h) {
@@ -57,49 +58,62 @@ GLWidget::GLWidget(QWidget *parent)
 
 GLWidget::~GLWidget()
 {
-    // Ensure proper cleanup
+    std::cout << "GLWidget: Destructor called" << std::endl;
+    qDebug() << "GLWidget: Destructor called";
+    
+    // Ensure proper cleanup - this will stop timers and clean up OpenGL resources
     cleanup();
+    
+    std::cout << "GLWidget: Destructor complete" << std::endl;
+    qDebug() << "GLWidget: Destructor complete";
 }
 
 void GLWidget::cleanup()
 {
-    // Stop any timers first
+    std::cout << "GLWidget: Starting cleanup..." << std::endl;
+    qDebug() << "GLWidget: Starting cleanup...";
+    
+    // Stop any timers first to prevent further updates
     renderTimer.stop();
+    renderTimer.disconnect();
     
     // Make sure we have a valid context before cleanup
     if (context() && context()->isValid()) {
         makeCurrent();
         
-        // Clean up OpenGL resources
-        if (shaderProgram) {
-            delete shaderProgram;
-            shaderProgram = nullptr;
-        }
+        qDebug() << "GLWidget: Cleaning up OpenGL resources...";
         
-        // Clean up buffers
-        if (vertexBuffer.isCreated()) {
-            vertexBuffer.destroy();
+        // Clean up OpenGL resources in proper order
+        if (vao.isCreated()) {
+            vao.destroy();
         }
         
         if (indexBuffer.isCreated()) {
             indexBuffer.destroy();
         }
         
-        // Clean up VAO
-        if (vao.isCreated()) {
-            vao.destroy();
+        if (vertexBuffer.isCreated()) {
+            vertexBuffer.destroy();
+        }
+        
+        if (shaderProgram) {
+            delete shaderProgram;
+            shaderProgram = nullptr;
         }
         
         doneCurrent();
+        qDebug() << "GLWidget: OpenGL resources cleaned up";
     }
     
     // Clean up camera
     if (camera) {
         delete camera;
         camera = nullptr;
+        qDebug() << "GLWidget: Camera cleaned up";
     }
     
     isInitialized = false;
+    qDebug() << "GLWidget: Cleanup complete";
 }
 
 void GLWidget::initializeGL()
@@ -138,19 +152,21 @@ void GLWidget::initializeGL()
     camera = new Camera();
     camera->setPerspective(45.0f, float(width()) / float(height()), 0.1f, 100.0f);
 
-    // Create cube as default geometry
-    setupDefaultGeometry();
-
     // Initialize matrices
     modelMatrix.setToIdentity();
     viewMatrix.setToIdentity();
     viewMatrix.lookAt(QVector3D(0, 0, 5), QVector3D(0, 0, 0), QVector3D(0, 1, 0));
 
-    // Start animation timer AFTER initialization
-    connect(&renderTimer, &QTimer::timeout, this, QOverload<>::of(&GLWidget::update));
-    renderTimer.start(16); // ~60 FPS
-    
+    // Mark as initialized BEFORE creating default geometry
     isInitialized = true;
+    
+    // Create cube as default geometry - NOW the context is ready
+    setupDefaultGeometry();
+
+    // Don't start continuous timer - only update when needed
+    // This prevents potential resource exhaustion from continuous rendering
+    // connect(&renderTimer, &QTimer::timeout, this, QOverload<>::of(&GLWidget::update));
+    // renderTimer.start(33); // Disabled continuous rendering
     
     qDebug() << "OpenGL initialized successfully";
 }
@@ -159,35 +175,100 @@ void GLWidget::paintGL()
 {
     // Ensure we're initialized and have valid context
     if (!isInitialized || !context() || !context()->isValid()) {
+        qDebug() << "GLWidget::paintGL: Not initialized or invalid context";
         return;
     }
+    
+    qDebug() << "GLWidget::paintGL: Starting paint operation";
 
-    // Clear buffers
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    
-    if (!shaderProgram || !vao.isCreated()) {
-        return;
-    }
-    
-    // Set wireframe mode
-    if (wireframeMode) {
-        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        glLineWidth(1.0f);
-    } else {
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-    }
+    try {
+        static int frameCounter = 0;
+        frameCounter++;
+        
+        // Log every 100 frames to track progress
+        if (frameCounter % 100 == 0) {
+            qDebug() << "GLWidget::paintGL: Frame" << frameCounter << "- hasModel:" << hasModel << "triangleCount:" << triangleCount;
+        }
+        
+        // Clear buffers
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        
+        if (!shaderProgram || !vao.isCreated()) {
+            qDebug() << "Shader program or VAO not ready";
+            return;
+        }
+        
+        // Set wireframe mode
+        if (wireframeMode) {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            glLineWidth(1.0f);
+        } else {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        }
     
     // Use shader program
     shaderProgram->bind();
 
-    // Update camera matrices
+    // Update camera matrices with validation
     if (camera) {
-        camera->aspect = float(width()) / float(height() ? height() : 1);
-        viewMatrix = camera->getViewMatrix();
-        projectionMatrix = camera->getProjectionMatrix();
+        // Validate camera pointer and state before any operations
+        try {
+            // Test if camera object is accessible by calling a simple method
+            camera->aspect = float(width()) / float(height() ? height() : 1);
+            
+            // Validate camera state before getting matrices
+            QVector3D camPos = camera->getPosition();
+            QVector3D camTarget = camera->getTarget();
+            QVector3D camUp = camera->getUp();
+            
+            qDebug() << "Camera state - Pos:" << camPos << "Target:" << camTarget << "Up:" << camUp;
+            
+            // Check for invalid values
+            bool validCamera = qIsFinite(camPos.x()) && qIsFinite(camPos.y()) && qIsFinite(camPos.z()) &&
+                              qIsFinite(camTarget.x()) && qIsFinite(camTarget.y()) && qIsFinite(camTarget.z()) &&
+                              qIsFinite(camUp.x()) && qIsFinite(camUp.y()) && qIsFinite(camUp.z());
+            
+            if (validCamera) {
+                qDebug() << "Camera state is valid, getting matrices";
+                viewMatrix = camera->getViewMatrix();
+                projectionMatrix = camera->getProjectionMatrix();
+                qDebug() << "Camera matrices obtained successfully";
+            } else {
+                qWarning() << "Invalid camera state detected, using fallback matrices";
+                camera->reset(); // Reset to safe state
+                viewMatrix = camera->getViewMatrix();
+                projectionMatrix = camera->getProjectionMatrix();
+            }
+        } catch (const std::exception& e) {
+            qCritical() << "Exception while accessing camera:" << e.what();
+            // Use fallback matrices
+            viewMatrix.setToIdentity();
+            viewMatrix.lookAt(QVector3D(0, 0, 5), QVector3D(0, 0, 0), QVector3D(0, 1, 0));
+            projectionMatrix.setToIdentity();
+            projectionMatrix.perspective(45.0f, float(width()) / float(height()), 0.1f, 100.0f);
+        } catch (...) {
+            qCritical() << "Unknown exception while accessing camera";
+            // Use fallback matrices
+            viewMatrix.setToIdentity();
+            viewMatrix.lookAt(QVector3D(0, 0, 5), QVector3D(0, 0, 0), QVector3D(0, 1, 0));
+            projectionMatrix.setToIdentity();
+            projectionMatrix.perspective(45.0f, float(width()) / float(height()), 0.1f, 100.0f);
+        }
     }
     
     modelMatrix.setToIdentity();
+    
+    // Validate transformation values before applying them
+    if (!qIsFinite(zoomFactor) || zoomFactor <= 0.0f) {
+        qWarning() << "Invalid zoom factor detected:" << zoomFactor << "- resetting to 1.0";
+        zoomFactor = 1.0f;
+    }
+    
+    if (!qIsFinite(rotationX) || !qIsFinite(rotationY) || !qIsFinite(rotationZ)) {
+        qWarning() << "Invalid rotation values detected - resetting";
+        rotationX = rotationY = rotationZ = 0.0f;
+    }
+    
     modelMatrix.scale(zoomFactor);
     modelMatrix.rotate(rotationX, 1, 0, 0);
     modelMatrix.rotate(rotationY, 0, 1, 0);
@@ -196,62 +277,172 @@ void GLWidget::paintGL()
     QMatrix4x4 mvpMatrix = projectionMatrix * viewMatrix * modelMatrix;
     QMatrix4x4 normalMatrix = modelMatrix.inverted().transposed();
 
-    // Set shader uniforms
-    shaderProgram->setUniformValue("u_mvpMatrix", mvpMatrix);
-    shaderProgram->setUniformValue("u_modelMatrix", modelMatrix);
-    shaderProgram->setUniformValue("u_color", defaultColor);
-    shaderProgram->setUniformValue("u_viewMatrix", viewMatrix);
-    shaderProgram->setUniformValue("u_normalMatrix", normalMatrix);
-
-    // Lighting uniforms
-    shaderProgram->setUniformValue("u_lightDir", QVector3D(-0.5f, -1.0f, -0.3f));
-    shaderProgram->setUniformValue("u_lightColor", QVector3D(1.0f, 1.0f, 1.0f));
-    
-    if (camera) {
-        shaderProgram->setUniformValue("u_lightPos", camera->getPosition());
-        shaderProgram->setUniformValue("u_viewPos", camera->getPosition());
-    } else {
-        shaderProgram->setUniformValue("u_lightPos", QVector3D(0.0f, 0.0f, 5.0f));
-        shaderProgram->setUniformValue("u_viewPos", QVector3D(0.0f, 0.0f, 5.0f));
+    // Validate matrices before sending to shader
+    bool validMatrices = true;
+    for (int i = 0; i < 16; i++) {
+        if (!qIsFinite(mvpMatrix.data()[i]) || !qIsFinite(normalMatrix.data()[i])) {
+            validMatrices = false;
+            break;
+        }
     }
     
-    shaderProgram->setUniformValue("u_ambientStrength", 0.2f);
-    shaderProgram->setUniformValue("u_specularStrength", 0.5f);
-    shaderProgram->setUniformValue("u_shininess", 32.0f);
+    if (!validMatrices) {
+        qWarning() << "Invalid matrices detected, skipping frame";
+        shaderProgram->release();
+        return;
+    }
 
-    // Material uniforms
-    QVector3D materialColor = hasModel ? QVector3D(0.8f, 0.8f, 0.9f) : QVector3D(0.7f, 0.3f, 0.3f);
-    shaderProgram->setUniformValue("u_materialColor", materialColor);
-    shaderProgram->setUniformValue("u_wireframe", wireframeMode);
-    shaderProgram->setUniformValue("u_lightingEnabled", lightingEnabled);
-    
-    // Additional lighting parameters
-    shaderProgram->setUniformValue("u_diffuseStrength", 0.7f);
-    shaderProgram->setUniformValue("u_lightConstant", 1.0f);
-    shaderProgram->setUniformValue("u_lightLinear", 0.09f);
-    shaderProgram->setUniformValue("u_lightQuadratic", 0.032f);
-    shaderProgram->setUniformValue("u_metallic", 0.1f);
-    shaderProgram->setUniformValue("u_roughness", 0.5f);
-    shaderProgram->setUniformValue("u_ao", 1.0f);
+    // Set shader uniforms
+    try {
+        shaderProgram->setUniformValue("u_mvpMatrix", mvpMatrix);
+        shaderProgram->setUniformValue("u_modelMatrix", modelMatrix);
+        shaderProgram->setUniformValue("u_color", defaultColor);
+        shaderProgram->setUniformValue("u_viewMatrix", viewMatrix);
+        shaderProgram->setUniformValue("u_normalMatrix", normalMatrix);
+
+        // Lighting uniforms
+        shaderProgram->setUniformValue("u_lightDir", QVector3D(-0.5f, -1.0f, -0.3f));
+        shaderProgram->setUniformValue("u_lightColor", QVector3D(1.0f, 1.0f, 1.0f));
+        
+        if (camera) {
+            try {
+                QVector3D camPos = camera->getPosition();
+                if (qIsFinite(camPos.x()) && qIsFinite(camPos.y()) && qIsFinite(camPos.z())) {
+                    shaderProgram->setUniformValue("u_lightPos", camPos);
+                    shaderProgram->setUniformValue("u_viewPos", camPos);
+                } else {
+                    qWarning() << "Invalid camera position, using default lighting position";
+                    shaderProgram->setUniformValue("u_lightPos", QVector3D(0.0f, 0.0f, 5.0f));
+                    shaderProgram->setUniformValue("u_viewPos", QVector3D(0.0f, 0.0f, 5.0f));
+                }
+            } catch (const std::exception& e) {
+                qWarning() << "Exception accessing camera position:" << e.what();
+                shaderProgram->setUniformValue("u_lightPos", QVector3D(0.0f, 0.0f, 5.0f));
+                shaderProgram->setUniformValue("u_viewPos", QVector3D(0.0f, 0.0f, 5.0f));
+            } catch (...) {
+                qWarning() << "Unknown exception accessing camera position";
+                shaderProgram->setUniformValue("u_lightPos", QVector3D(0.0f, 0.0f, 5.0f));
+                shaderProgram->setUniformValue("u_viewPos", QVector3D(0.0f, 0.0f, 5.0f));
+            }
+        } else {
+            shaderProgram->setUniformValue("u_lightPos", QVector3D(0.0f, 0.0f, 5.0f));
+            shaderProgram->setUniformValue("u_viewPos", QVector3D(0.0f, 0.0f, 5.0f));
+        }
+        
+        shaderProgram->setUniformValue("u_ambientStrength", 0.2f);
+        shaderProgram->setUniformValue("u_specularStrength", 0.5f);
+        shaderProgram->setUniformValue("u_shininess", 32.0f);
+
+        // Material uniforms
+        QVector3D materialColor = hasModel ? QVector3D(0.8f, 0.8f, 0.9f) : QVector3D(0.7f, 0.3f, 0.3f);
+        shaderProgram->setUniformValue("u_materialColor", materialColor);
+        shaderProgram->setUniformValue("u_wireframe", wireframeMode);
+        shaderProgram->setUniformValue("u_lightingEnabled", lightingEnabled);
+        
+        // Additional lighting parameters
+        shaderProgram->setUniformValue("u_diffuseStrength", 0.7f);
+        shaderProgram->setUniformValue("u_lightConstant", 1.0f);
+        shaderProgram->setUniformValue("u_lightLinear", 0.09f);
+        shaderProgram->setUniformValue("u_lightQuadratic", 0.032f);
+        shaderProgram->setUniformValue("u_metallic", 0.1f);
+        shaderProgram->setUniformValue("u_roughness", 0.5f);
+        shaderProgram->setUniformValue("u_ao", 1.0f);
+    } catch (...) {
+        qWarning() << "Error setting shader uniforms, skipping frame";
+        shaderProgram->release();
+        return;
+    }
     
     // Bind VAO and draw
     vao.bind();
     
-    if (hasModel && !indices.isEmpty()) {
-        // Draw indexed geometry - fixed size_t to int conversion
-        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, 0);
-    } else {
-        // Draw non-indexed geometry
-        glDrawArrays(GL_TRIANGLES, 0, triangleCount * 3);
+    // Check for OpenGL errors before drawing
+    GLenum error = glGetError();
+    if (error != GL_NO_ERROR) {
+        qWarning() << "OpenGL error before drawing:" << error;
     }
     
+    // Drawing logic with proper error checking
+    if (hasModel && !indices.isEmpty()) {
+        // Draw indexed geometry for STL models
+        int indexCount = indices.size();
+        qDebug() << "Drawing STL with" << indexCount << "indices";
+        
+        // Add bounds checking for draw call
+        if (indexCount > 0 && indexCount < 1000000) { // Sanity check
+            qDebug() << "About to call glDrawElements with" << indexCount << "indices";
+            
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_INT, 0);
+            
+            qDebug() << "glDrawElements call completed successfully";
+            
+            // Check for errors immediately after draw call
+            GLenum drawError = glGetError();
+            if (drawError != GL_NO_ERROR) {
+                qWarning() << "OpenGL error during glDrawElements:" << drawError;
+            } else {
+                qDebug() << "No OpenGL errors after glDrawElements";
+            }
+        } else {
+            qWarning() << "Invalid index count for drawing:" << indexCount;
+        }
+    } else {
+        // Draw non-indexed geometry for default cube
+        int vertexCount = triangleCount * 3;
+        static bool logged = false;
+        if (!logged) {
+            qDebug() << "Drawing cube with" << vertexCount << "vertices";
+            logged = true;
+        }
+        
+        if (vertexCount > 0 && vertexCount < 1000000) { // Sanity check
+            glDrawArrays(GL_TRIANGLES, 0, vertexCount);
+            
+            // Check for errors immediately after draw call
+            GLenum drawError = glGetError();
+            if (drawError != GL_NO_ERROR) {
+                qWarning() << "OpenGL error during glDrawArrays:" << drawError;
+            }
+        } else {
+            qWarning() << "Invalid vertex count for drawing:" << vertexCount;
+        }
+    }
+    
+    // Check for OpenGL errors after drawing
+    error = glGetError();
+    if (error != GL_NO_ERROR) {
+        qWarning() << "OpenGL error after drawing:" << error;
+    } else {
+        qDebug() << "No OpenGL errors after drawing";
+    }
+    
+    qDebug() << "About to release VAO";
     vao.release();
+    qDebug() << "VAO released successfully";
+    
+    qDebug() << "About to release shader program";
     shaderProgram->release();
+    qDebug() << "Shader program released successfully";
     
     // Reset polygon mode
+    qDebug() << "About to reset polygon mode";
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    qDebug() << "Polygon mode reset successfully";
     
+    // Track frame completion
+    qDebug() << "About to emit frameRendered signal";
     emit frameRendered();
+    qDebug() << "frameRendered signal emitted successfully";
+    
+    qDebug() << "paintGL method completing normally";
+    
+    } catch (const std::exception& e) {
+        qCritical() << "Exception in paintGL:" << e.what();
+    } catch (...) {
+        qCritical() << "Unknown exception in paintGL";
+    }
+    
+    qDebug() << "paintGL method finished (after catch blocks)";
 }
 
 void GLWidget::resizeGL(int width, int height)
@@ -266,6 +457,7 @@ void GLWidget::resizeGL(int width, int height)
 
 void GLWidget::mousePressEvent(QMouseEvent *event)
 {
+    qDebug() << "GLWidget::mousePressEvent: Button" << event->button() << "at position" << event->pos();
     lastMousePos = event->pos();
     mousePressed = true;
     mouseButton = event->button();
@@ -275,6 +467,8 @@ void GLWidget::mouseMoveEvent(QMouseEvent *event)
 {
     if (mousePressed) {
         QPoint delta = event->pos() - lastMousePos;
+        qDebug() << "GLWidget::mouseMoveEvent: Delta" << delta << "Button" << mouseButton;
+        
         if (mouseButton == Qt::LeftButton) {
             // Simple rotation
             float sensitivity = 0.5f;
@@ -286,10 +480,13 @@ void GLWidget::mouseMoveEvent(QMouseEvent *event)
             while (rotationX < -360.0f) rotationX += 360.0f;
             while (rotationY > 360.0f) rotationY -= 360.0f;
             while (rotationY < -360.0f) rotationY += 360.0f;
+            
+            qDebug() << "GLWidget::mouseMoveEvent: New rotations X:" << rotationX << "Y:" << rotationY;
         } else if (mouseButton == Qt::RightButton && camera) {
             // Pan
             float panX = float(delta.x());
             float panY = float(-delta.y());
+            qDebug() << "GLWidget::mouseMoveEvent: Panning" << panX << panY;
             camera->pan(panX, panY);
         }
         lastMousePos = event->pos();
@@ -299,6 +496,7 @@ void GLWidget::mouseMoveEvent(QMouseEvent *event)
 
 void GLWidget::mouseReleaseEvent(QMouseEvent *event)
 {
+    qDebug() << "GLWidget::mouseReleaseEvent: Button" << event->button();
     Q_UNUSED(event)
     mousePressed = false;
     mouseButton = Qt::NoButton;
@@ -306,18 +504,51 @@ void GLWidget::mouseReleaseEvent(QMouseEvent *event)
 
 void GLWidget::wheelEvent(QWheelEvent *event)
 {
+    if (!event) {
+        qWarning() << "GLWidget::wheelEvent: Null event received";
+        return;
+    }
+    
     // Zoom with mouse wheel
     float delta = event->angleDelta().y() / 120.0f;
     float zoomSpeed = 0.1f;
     
+    qDebug() << "GLWidget::wheelEvent: Delta" << delta << "Current zoom:" << zoomFactor;
+    
+    // Validate delta before proceeding
+    if (!qIsFinite(delta) || qAbs(delta) > 10.0f) {
+        qWarning() << "GLWidget::wheelEvent: Invalid delta value:" << delta;
+        return;
+    }
+    
     if (camera) {
         float factor = 1.0f - delta * zoomSpeed * 0.1f;
-        camera->zoom(factor);
+        
+        // Validate zoom factor before passing to camera
+        if (!qIsFinite(factor) || factor <= 0.001f || factor > 1000.0f) {
+            qWarning() << "GLWidget::wheelEvent: Invalid zoom factor:" << factor << "- skipping";
+            return;
+        }
+        
+        qDebug() << "GLWidget::wheelEvent: Camera zoom factor" << factor;
+        
+        try {
+            camera->zoom(factor);
+            qDebug() << "GLWidget::wheelEvent: Camera zoom completed successfully";
+        } catch (const std::exception& e) {
+            qWarning() << "GLWidget::wheelEvent: Exception during camera zoom:" << e.what();
+        } catch (...) {
+            qWarning() << "GLWidget::wheelEvent: Unknown exception during camera zoom";
+        }
     } else {
         zoomFactor += delta * zoomSpeed;
         zoomFactor = qMax(0.1f, qMin(10.0f, zoomFactor));
+        qDebug() << "GLWidget::wheelEvent: New zoom factor" << zoomFactor;
     }
+    
+    qDebug() << "GLWidget::wheelEvent: About to call update()";
     update();
+    qDebug() << "GLWidget::wheelEvent: update() called successfully";
 }
 
 bool GLWidget::setupShaders()
@@ -465,6 +696,13 @@ bool GLWidget::setupShaders()
 
 void GLWidget::setupDefaultGeometry()
 {
+    if (!isInitialized) {
+        qWarning() << "Cannot setup default geometry - OpenGL not initialized";
+        return;
+    }
+    
+    qDebug() << "Setting up default cube geometry";
+    
     // Create a simple cube as default geometry
     QVector<float> cubeVertices = {
         // Front face
@@ -516,59 +754,58 @@ void GLWidget::setupDefaultGeometry()
         -1.0f,  1.0f, -1.0f,  0.0f,  1.0f,  0.0f
     };
     
+    // Reset model state for default geometry
     triangleCount = 12; // 12 triangles for a cube
     hasModel = false;
+    indices.clear(); // No indices for cube
     
     setupVertexBuffer(cubeVertices);
+    
+    qDebug() << "Default cube geometry setup complete";
 }
 
 void GLWidget::setupVertexBuffer(const QVector<float>& vertexData)
 {
-    makeCurrent();
-    
-
-    if (vertexBuffer.isCreated()) vertexBuffer.destroy();
-    if (indexBuffer.isCreated()) indexBuffer.destroy();
-    if (vao.isCreated()) vao.destroy();
-
-    // Add proper context validation
-    if (!context() || !context()->isValid()) {
+    if (!isInitialized || !context() || !context()->isValid()) {
         qWarning() << "OpenGL context not available during vertex buffer setup";
-        doneCurrent();
         return;
     }
 
-    // Calculate bounding box for loaded models
-    if (hasModel) {
-        calculateBoundingBox(vertexData);
-    } else {
-        boundingBoxValid = false;
-    }
+    try {
+        makeCurrent();
+
+        // Clean up existing buffers
+        if (vertexBuffer.isCreated()) vertexBuffer.destroy();
+        if (indexBuffer.isCreated()) indexBuffer.destroy();
+        if (vao.isCreated()) vao.destroy();
+
+        // Calculate bounding box for loaded models
+        if (hasModel) {
+            calculateBoundingBox(vertexData);
+        } else {
+            boundingBoxValid = false;
+        }
     
     // Create VAO
-    if (!vao.isCreated()) {
-        if (!vao.create()) {
-            qCritical() << "Failed to create VAO";
-            doneCurrent();
-            return;
-        }
+    if (!vao.create()) {
+        qCritical() << "Failed to create VAO";
+        doneCurrent();
+        return;
     }
     vao.bind();
 
     // Create VBO
-    if (!vertexBuffer.isCreated()) {
-        if (!vertexBuffer.create()) {
-            qCritical() << "Failed to create vertex buffer";
-            vao.release();
-            doneCurrent();
-            return;
-        }
+    if (!vertexBuffer.create()) {
+        qCritical() << "Failed to create vertex buffer";
+        vao.release();
+        doneCurrent();
+        return;
     }
     
     vertexBuffer.bind();
     vertexBuffer.allocate(vertexData.data(), static_cast<int>(vertexData.size() * sizeof(float)));
 
-    // Set up vertex attributes
+    // Set up vertex attributes (position + normal)
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
     
@@ -577,101 +814,119 @@ void GLWidget::setupVertexBuffer(const QVector<float>& vertexData)
     
     // Set up index buffer if we have indices
     if (hasModel && !indices.isEmpty()) {
-        if (!indexBuffer.isCreated()) {
-            if (!indexBuffer.create()) {
-                qCritical() << "Failed to create index buffer";
-                vao.release();
-                vertexBuffer.release();
-                doneCurrent();
-                return;
-            }
+        if (!indexBuffer.create()) {
+            qCritical() << "Failed to create index buffer";
+            vao.release();
+            vertexBuffer.release();
+            doneCurrent();
+            return;
         }
         
         indexBuffer.bind();
         indexBuffer.allocate(indices.data(), static_cast<int>(indices.size() * sizeof(unsigned int)));
+        // Keep index buffer bound to VAO
     }
     
     // Release buffers and VAO
-    if (indexBuffer.isCreated()) {
-        indexBuffer.release();
-    }
     vertexBuffer.release();
     vao.release();
     
-    doneCurrent();
-    
-    qDebug() << "Vertex buffer setup complete. Vertices:" << vertexData.size() / 6;
+        doneCurrent();
+        
+        qDebug() << "Vertex buffer setup complete. Vertices:" << vertexData.size() / 6 
+                 << "Indices:" << indices.size() << "HasModel:" << hasModel;
+                 
+    } catch (const std::exception& e) {
+        qCritical() << "Exception in setupVertexBuffer:" << e.what();
+        doneCurrent();
+    } catch (...) {
+        qCritical() << "Unknown exception in setupVertexBuffer";
+        doneCurrent();
+    }
 }
 
-// FIXED: File loading now runs on main thread with proper error handling
 void GLWidget::loadSTLFile(const QString &fileName)
 {
-
-    cleanupModel();
-
+    qDebug() << "Loading STL file:" << fileName;
+    
     if (!isInitialized || !context() || !context()->isValid()) {
         qWarning() << "OpenGL not initialized, cannot load STL file";
         return;
     }
-    qDebug() << "Loading STL file:" << fileName;
-    
-    // Create loader and configure it
-    STLLoader loader;
-    loader.setAutoCenter(true);
-    loader.setAutoNormalize(true);
-    
-    // Load the file (this is the critical fix - ensure this runs on main thread)
-    STLLoader::LoadResult result = loader.loadFile(fileName);
-    
-    if (result == STLLoader::Success) {
-        // Get vertex data from loader
-        const QVector<float>& vertexData = loader.getVertexData();
-        const QVector<unsigned int>& indexData = loader.getIndices();
+
+    try {
+        // Clean up previous model but don't reset to cube yet
+        cleanupModel();
         
-        if (vertexData.isEmpty()) {
-            qWarning() << "STL file loaded but contains no vertex data";
-            return;
+        // Create loader and configure it
+        STLLoader loader;
+        loader.setAutoCenter(true);
+        loader.setAutoNormalize(true);
+        
+        // Load the file
+        STLLoader::LoadResult result = loader.loadFile(fileName);
+        
+        if (result == STLLoader::Success) {
+            // Get vertex data from loader
+            const QVector<float>& vertexData = loader.getVertexData();
+            const QVector<unsigned int>& indexData = loader.getIndices();
+            
+            if (vertexData.isEmpty()) {
+                qWarning() << "STL file loaded but contains no vertex data";
+                setupDefaultGeometry(); // Fallback to cube
+                return;
+            }
+            
+            // CRITICAL: Validate data consistency
+            int expectedVertexCount = vertexData.size() / 6; // 6 floats per vertex (pos + normal)
+            qDebug() << "STL Data validation:";
+            qDebug() << "  Raw vertex data size:" << vertexData.size();
+            qDebug() << "  Expected vertex count:" << expectedVertexCount;
+            qDebug() << "  Actual vertex count from loader:" << loader.getVertexCount();
+            qDebug() << "  Index count:" << indexData.size();
+            qDebug() << "  Triangle count:" << loader.getTriangleCount();
+        
+        // Validate indices don't exceed vertex count
+        if (!indexData.isEmpty()) {
+            unsigned int maxIndex = *std::max_element(indexData.begin(), indexData.end());
+            if (maxIndex >= static_cast<unsigned int>(expectedVertexCount)) {
+                qCritical() << "Index out of range! Max index:" << maxIndex 
+                           << "Vertex count:" << expectedVertexCount;
+                setupDefaultGeometry(); // Fallback to cube
+                return;
+            }
         }
         
+        // Set model data BEFORE calling setupVertexBuffer
         triangleCount = loader.getTriangleCount();
         hasModel = true;
         indices = indexData;
         
-        qDebug() << "STL loaded successfully. Triangles:" << triangleCount << "Vertices:" << loader.getVertexCount();
+        qDebug() << "STL loaded successfully. Triangles:" << triangleCount 
+                 << "Vertices:" << expectedVertexCount;
         
-        // Set up index buffer if available
-        if (!indices.isEmpty()) {
-            makeCurrent();
-            vao.bind();
+            // Setup vertex buffer with the loaded data
+            setupVertexBuffer(vertexData);
             
-            if (!indexBuffer.isCreated()) {
-                if (!indexBuffer.create()) {
-                    qCritical() << "Failed to create index buffer";
-                    vao.release();
-                    doneCurrent();
-                    return;
-                }
-            }
+            // Automatically fit the model to window after loading with a small delay
+            QTimer::singleShot(100, this, &GLWidget::fitToWindow);
             
-            indexBuffer.bind();
-            indexBuffer.allocate(indices.data(), static_cast<int>(indices.size() * sizeof(unsigned int)));
+            emit fileLoaded(QFileInfo(fileName).fileName(), triangleCount, expectedVertexCount);
             
-            vao.release();
-            doneCurrent();
+            // Force an update
+            update();        } else {
+            QString errorMsg = "Failed to load STL file: " + loader.getErrorString();
+            qWarning() << errorMsg;
+            // Fallback to default cube on error
+            setupDefaultGeometry();
         }
         
-        // Automatically fit the model to window after loading
-        fitToWindow();
-        
-        emit fileLoaded(QFileInfo(fileName).fileName(), triangleCount, loader.getVertexCount());
-        
-        // Force an update
-        update();
-        
-    } else {
-        QString errorMsg = "Failed to load STL file: " + loader.getErrorString();
-        qWarning() << errorMsg;
-        // Keep showing the default cube on error
+    } catch (const std::exception& e) {
+        qCritical() << "Exception while loading STL file:" << e.what();
+        setupDefaultGeometry(); // Fallback to cube
+    } catch (...) {
+        qCritical() << "Unknown exception while loading STL file";
+        setupDefaultGeometry(); // Fallback to cube
     }
 }
 
@@ -801,9 +1056,25 @@ void GLWidget::fitToWindow()
         return;
     }
     
+    // Validate bounding box values
+    if (!qIsFinite(modelRadius) || modelRadius <= 0.0f ||
+        !qIsFinite(modelCenter.x()) || !qIsFinite(modelCenter.y()) || !qIsFinite(modelCenter.z())) {
+        qWarning() << "Invalid bounding box, cannot fit to window";
+        update();
+        return;
+    }
+    
     // Calculate optimal camera distance
     float fovRadians = qDegreesToRadians(camera->getFov());
     float aspectRatio = float(width()) / float(height() ? height() : 1);
+    
+    // Validate FOV and aspect ratio
+    if (!qIsFinite(fovRadians) || fovRadians <= 0.0f || fovRadians >= M_PI ||
+        !qIsFinite(aspectRatio) || aspectRatio <= 0.0f) {
+        qWarning() << "Invalid camera parameters for fit to window";
+        update();
+        return;
+    }
     
     // Calculate distance needed to fit the model
     float distance;
@@ -816,11 +1087,26 @@ void GLWidget::fitToWindow()
         distance = modelRadius / tanf(horizontalFov * 0.5f);
     }
     
-    // Add some padding
-    distance *= 1.2f;
+    // Validate distance and add some padding
+    if (!qIsFinite(distance) || distance <= 0.0f) {
+        distance = 5.0f; // Fallback distance
+    } else {
+        distance *= 1.2f; // Add padding
+    }
+    
+    // Clamp distance to reasonable bounds
+    distance = qBound(0.1f, distance, 100.0f);
     
     // Position camera to look at model center
     QVector3D cameraPos = modelCenter + QVector3D(0, 0, distance);
+    
+    // Validate final position
+    if (!qIsFinite(cameraPos.x()) || !qIsFinite(cameraPos.y()) || !qIsFinite(cameraPos.z())) {
+        qWarning() << "Invalid camera position calculated";
+        camera->reset();
+        update();
+        return;
+    }
     
     camera->setPosition(cameraPos);
     camera->setTarget(modelCenter);

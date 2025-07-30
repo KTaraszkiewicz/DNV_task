@@ -114,7 +114,7 @@ if(WIN32 AND QT_VERSION_MAJOR EQUAL 6)
     find_program(QT_WINDEPLOYQT_EXECUTABLE windeployqt HINTS ${CMAKE_PREFIX_PATH}/bin)
     if(QT_WINDEPLOYQT_EXECUTABLE)
         add_custom_command(TARGET STLViewer POST_BUILD
-            COMMAND ${QT_WINDEPLOYQT_EXECUTABLE} $<TARGET_FILE:STLViewer>
+            COMMAND ${QT_WINDEPLOYQT_EXECUTABLE} --no-compiler-runtime $<TARGET_FILE:STLViewer>
             COMMENT "Deploying Qt libraries"
         )
     endif()
