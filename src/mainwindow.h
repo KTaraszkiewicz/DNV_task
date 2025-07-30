@@ -34,67 +34,70 @@ public:
     ~MainWindow();
 
 private slots:
-    // File menu actions
+    // What happens when user clicks "Open" or "Exit" in the menu
     void openSTLFile();
     void exitApplication();
     
-    // Toolbar actions
-    void resetView();
-    void fitToWindow();
-    void toggleWireframe();
-    void toggleLighting();
+    // What happens when user clicks toolbar buttons
+    void resetView();          // Reset camera to default position
+    void fitToWindow();        // Zoom to show entire 3D model
+    void toggleWireframe();    // Switch between solid and wireframe view
+    void toggleLighting();     // Turn lights on/off
     
-    // View controls
-    void onZoomChanged(int value);
-    void onRotationXChanged(int value);
-    void onRotationYChanged(int value);
-    void onRotationZChanged(int value);
+    // What happens when user moves the control sliders
+    void onZoomChanged(int value);        // User zoomed in or out
+    void onRotationXChanged(int value);   // User rotated around X axis
+    void onRotationYChanged(int value);   // User rotated around Y axis
+    void onRotationZChanged(int value);   // User rotated around Z axis
     
-    // Status updates
-    void updateFrameRate();
+    // Keep the display updated with current info
+    void updateFrameRate();               // Show how fast we're drawing frames
     void updateFileInfo(const QString& filename, int triangles, int vertices);
 
 private:
-    void setupMenuBar();
-    void setupToolBar();
-    void setupStatusBar();
-    void setupCentralWidget();
-    void createActions();
-    void connectSignals();
+    // Build the different parts of the window
+    void setupMenuBar();      // Create File menu, etc.
+    void setupToolBar();      // Create buttons at the top
+    void setupStatusBar();    // Create info bar at the bottom
+    void setupCentralWidget(); // Create the main 3D viewing area
+    void createActions();     // Set up what menu items and buttons do
+    void connectSignals();    // Wire up sliders to their functions
     
-    // UI components
+    // The main parts of our window
     Ui::MainWindow *ui;
-    GLWidget *glWidget;
+    GLWidget *glWidget;       // This is where we draw the 3D model
     
-    // Menu actions
-    QAction *openAction;
-    QAction *exitAction;
+    // Menu items that user can click
+    QAction *openAction;      // Open STL file
+    QAction *exitAction;      // Quit the program
     
-    // Toolbar actions
-    QAction *resetViewAction;
-    QAction *fitToWindowAction;
-    QAction *wireframeAction;
-    QAction *lightingAction;
+    // Toolbar buttons
+    QAction *resetViewAction;    // Reset camera button
+    QAction *fitToWindowAction;  // Fit to window button
+    QAction *wireframeAction;    // Wireframe toggle button
+    QAction *lightingAction;     // Lighting toggle button
     
-    // Toolbar controls
-    QSlider *zoomSlider;
-    QSlider *rotationXSlider;
-    QSlider *rotationYSlider;
-    QSlider *rotationZSlider;
-    QSpinBox *zoomSpinBox;
+    // User controls for manipulating the view
+    QSlider *zoomSlider;         // Slider to zoom in/out
+    QSlider *rotationXSlider;    // Slider to rotate left/right
+    QSlider *rotationYSlider;    // Slider to rotate up/down
+    QSlider *rotationZSlider;    // Slider to spin around
+    QSpinBox *zoomSpinBox;       // Number box showing exact zoom level
     
-    // Status bar widgets
-    QLabel *fileInfoLabel;
-    QLabel *frameRateLabel;
-    QLabel *statusLabel;
+    // Information displayed at bottom of window
+    QLabel *fileInfoLabel;       // Shows filename and model statistics
+    QLabel *frameRateLabel;      // Shows how many frames per second
+    QLabel *statusLabel;         // Shows current status messages
     
-    // Timer for frame rate calculation
+    // Timer that triggers frame rate calculation every second
     QTimer *frameRateTimer;
-    int frameCount;
+    int frameCount;              // Count frames to calculate FPS
     
-    // Current file info
+    // Keep track of what file we have open
     QString currentFileName;
+
 protected:
+    // What to do when user tries to close the window
     void closeEvent(QCloseEvent *event) override;
 };
 

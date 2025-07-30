@@ -2,44 +2,28 @@
 #include <QApplication>
 #include <iostream>
 #include <exception>
-#include <QDebug>
-#include <QLoggingCategory>
-#include <QStandardPaths>
-#include <QDir>
 
 int main(int argc, char *argv[])
 {
     try {
+        // Create Qt application instance
         QApplication a(argc, argv);
         
-        // Enable all Qt logging and redirect to console
-        QLoggingCategory::setFilterRules("*=true");
-        
-        std::cout << "Application starting..." << std::endl;
-        qDebug() << "Application starting...";
-        
-        // Add application about to quit handler
-        QObject::connect(&a, &QApplication::aboutToQuit, []() {
-            std::cout << "Application about to quit..." << std::endl;
-            qDebug() << "Application about to quit...";
-        });
-        
+        // Create and show main window
         MainWindow w;
         w.show();
         
-        std::cout << "Entering application event loop..." << std::endl;
-        qDebug() << "Entering application event loop...";
-        int result = a.exec();
-        std::cout << "Application event loop exited with code: " << result << std::endl;
-        qDebug() << "Application event loop exited with code:" << result;
-        return result;
-    } catch (const std::exception& ex) {
+        // Start the main event loop (handles user input, window updates, etc.)
+        return a.exec();
+    } 
+    catch (const std::exception& ex) {
+        // Handle any standard C++ exceptions
         std::cerr << "Application error: " << ex.what() << std::endl;
-        qCritical() << "Application error:" << ex.what();
         return 1;
-    } catch (...) {
+    } 
+    catch (...) {
+        // Handle any other unexpected errors
         std::cerr << "Unknown error occurred." << std::endl;
-        qCritical() << "Unknown error occurred.";
         return 2;
     }
 }

@@ -8,37 +8,41 @@
 #include <QTextStream>
 #include <QDataStream>
 
+// A triangle in 3D space - the basic building block of 3D models
 struct STLTriangle {
-    QVector3D normal;
-    QVector3D vertex1;
-    QVector3D vertex2;
-    QVector3D vertex3;
+    QVector3D normal;    // Direction the triangle face is pointing
+    QVector3D vertex1;   // First corner of the triangle
+    QVector3D vertex2;   // Second corner of the triangle
+    QVector3D vertex3;   // Third corner of the triangle
     
     STLTriangle() = default;
     STLTriangle(const QVector3D& n, const QVector3D& v1, const QVector3D& v2, const QVector3D& v3)
         : normal(n), vertex1(v1), vertex2(v2), vertex3(v3) {}
 };
 
+// A single point in 3D space with information about surface direction
 struct STLVertex {
-    QVector3D position;
-    QVector3D normal;
+    QVector3D position;  // Where this point is in 3D space
+    QVector3D normal;    // Which direction the surface faces at this point
     
     STLVertex() = default;
     STLVertex(const QVector3D& pos, const QVector3D& norm)
         : position(pos), normal(norm) {}
 };
 
+// A box that completely surrounds the 3D model - useful for centering and sizing
 struct BoundingBox {
-    QVector3D min;
-    QVector3D max;
-    QVector3D center;
-    QVector3D size;
-    float maxDimension;
+    QVector3D min;          // Bottom-left-back corner of the box
+    QVector3D max;          // Top-right-front corner of the box
+    QVector3D center;       // Exact middle point of the model
+    QVector3D size;         // How wide, tall, and deep the model is
+    float maxDimension;     // The largest dimension (width, height, or depth)
     
     BoundingBox() {
         reset();
     }
     
+    // Start over with empty bounding box
     void reset() {
         min = QVector3D(FLT_MAX, FLT_MAX, FLT_MAX);
         max = QVector3D(-FLT_MAX, -FLT_MAX, -FLT_MAX);
@@ -47,6 +51,7 @@ struct BoundingBox {
         maxDimension = 0.0f;
     }
     
+    // Expand bounding box to include this new point
     void update(const QVector3D& point) {
         min.setX(qMin(min.x(), point.x()));
         min.setY(qMin(min.y(), point.y()));
@@ -57,12 +62,14 @@ struct BoundingBox {
         max.setZ(qMax(max.z(), point.z()));
     }
     
+    // Calculate the final center, size, etc. after adding all points
     void finalize() {
         center = (min + max) * 0.5f;
         size = max - min;
         maxDimension = qMax(qMax(size.x(), size.y()), size.z());
     }
     
+    // Check if we actually have a valid bounding box
     bool isValid() const {
         return min.x() != FLT_MAX && max.x() != -FLT_MAX;
     }
@@ -71,58 +78,61 @@ struct BoundingBox {
 class STLLoader
 {
 public:
+    // STL files can be stored in two different ways
     enum STLFormat {
-        Unknown,
-        Binary,
-        ASCII
+        Unknown,    // We don't know what format this is
+        Binary,     // Compact binary format (smaller files)
+        ASCII       // Text format (human readable, larger files)
     };
     
+    // All the things that can go wrong when loading a file
     enum LoadResult {
-        Success,
-        FileNotFound,
-        CannotOpenFile,
-        InvalidFormat,
-        CorruptedFile,
-        EmptyFile,
-        UnsupportedFormat,
-        ReadError
+        Success,              // Everything worked perfectly
+        FileNotFound,         // The file doesn't exist
+        CannotOpenFile,       // File exists but we can't read it
+        InvalidFormat,        // This isn't a valid STL file
+        CorruptedFile,        // File is damaged or incomplete
+        EmptyFile,            // File has no triangles in it
+        UnsupportedFormat,    // This STL variant isn't supported
+        ReadError             // Something went wrong while reading
     };
 
 public:
     STLLoader();
     ~STLLoader();
 
-    // Main loading functions
+    // The main function - load an STL file from disk
     LoadResult loadFile(const QString& fileName);
-    void clear();
+    void clear();  // Forget everything and start fresh
     
-    // Format detection
+    // Figure out if a file is binary or ASCII format
     STLFormat detectFormat(const QString& fileName);
     static bool isBinarySTL(const QString& fileName);
     static bool isASCIISTL(const QString& fileName);
     
-    // Data access
+    // Get the loaded 3D model data
     const QVector<STLTriangle>& getTriangles() const { return triangles; }
     const QVector<STLVertex>& getVertices() const { return vertices; }
-    const QVector<float>& getVertexData() const { return vertexData; }
-    const QVector<unsigned int>& getIndices() const { return indices; }
+    const QVector<float>& getVertexData() const { return vertexData; }        // Ready for OpenGL
+    const QVector<unsigned int>& getIndices() const { return indices; }       // For efficient drawing
     const BoundingBox& getBoundingBox() const { return boundingBox; }
     
-    // Statistics
+    // Get information about the loaded model
     int getTriangleCount() const { return triangles.size(); }
     int getVertexCount() const { return vertices.size(); }
     QString getFileName() const { return fileName; }
     STLFormat getFormat() const { return format; }
-    QString getFormatString() const;
-    QString getErrorString() const { return errorString; }
+    QString getFormatString() const;  // Get format as readable text
+    QString getErrorString() const { return errorString; }  // What went wrong
     
-    // Options
-    void setAutoCenter(bool enable) { autoCenter = enable; }
-    void setAutoNormalize(bool enable) { autoNormalize = enable; }
-    void setCalculateNormals(bool enable) { calculateNormals = enable; }
-    void setMergeVertices(bool enable) { mergeVertices = enable; }
-    void setVertexTolerance(float tolerance) { vertexTolerance = tolerance; }
+    // Settings for how to process the loaded model
+    void setAutoCenter(bool enable) { autoCenter = enable; }          // Move model to center of screen
+    void setAutoNormalize(bool enable) { autoNormalize = enable; }    // Scale model to standard size
+    void setCalculateNormals(bool enable) { calculateNormals = enable; }  // Recalculate surface directions
+    void setMergeVertices(bool enable) { mergeVertices = enable; }     // Combine duplicate points
+    void setVertexTolerance(float tolerance) { vertexTolerance = tolerance; }  // How close is "same point"
     
+    // Get current settings
     bool getAutoCenter() const { return autoCenter; }
     bool getAutoNormalize() const { return autoNormalize; }
     bool getCalculateNormals() const { return calculateNormals; }
@@ -130,52 +140,52 @@ public:
     float getVertexTolerance() const { return vertexTolerance; }
 
 private:
-    // Loading implementation
+    // The actual work of reading binary and text STL files
     LoadResult loadBinarySTL(QFile& file);
     LoadResult loadASCIISTL(QFile& file);
     
-    // Data processing
-    void processTriangles();
-    void calculateBoundingBox();
-    void centerModel();
-    void normalizeModel();
-    void generateVertexBuffer();
-    void generateIndices();
+    // Clean up and organize the loaded data
+    void processTriangles();         // Do all the processing steps
+    void calculateBoundingBox();     // Figure out model size and position
+    void centerModel();              // Move model to center of screen
+    void normalizeModel();           // Scale model to fit nicely
+    void generateVertexBuffer();     // Prepare data for graphics card
+    void generateIndices();          // Create index list for efficient rendering
     QVector3D calculateTriangleNormal(const QVector3D& v1, const QVector3D& v2, const QVector3D& v3);
     
-    // Utility functions
-    void setError(const QString& error);
-    bool isValidTriangle(const STLTriangle& triangle);
-    int findOrAddVertex(QVector<STLVertex>& uniqueVertices, const STLVertex& vertex);
-    bool verticesEqual(const STLVertex& a, const STLVertex& b, float tolerance);
+    // Helper functions
+    void setError(const QString& error);  // Record what went wrong
+    bool isValidTriangle(const STLTriangle& triangle);  // Check if triangle makes sense
+    int findOrAddVertex(QVector<STLVertex>& uniqueVertices, const STLVertex& vertex);  // Avoid duplicate vertices
+    bool verticesEqual(const STLVertex& a, const STLVertex& b, float tolerance);  // Are two points the same?
     
-    // Parsing helpers for ASCII
+    // Help with reading text STL files
     QVector3D parseVector3D(const QStringList& tokens, int startIndex);
     bool parseASCIILine(const QString& line, QString& keyword, QStringList& values);
     
-    // Data members
-    QVector<STLTriangle> triangles;
-    QVector<STLVertex> vertices;
-    QVector<float> vertexData;        // Interleaved position + normal data for OpenGL
-    QVector<unsigned int> indices;    // Index buffer for OpenGL
-    BoundingBox boundingBox;
+    // All the data we've loaded
+    QVector<STLTriangle> triangles;      // All the triangles that make up the model
+    QVector<STLVertex> vertices;         // All the unique points
+    QVector<float> vertexData;           // Data formatted for OpenGL graphics
+    QVector<unsigned int> indices;       // List of which vertices make each triangle
+    BoundingBox boundingBox;             // Size and position info
     
-    QString fileName;
-    STLFormat format;
-    QString errorString;
+    QString fileName;        // Name of file we loaded
+    STLFormat format;        // Whether it was binary or text format
+    QString errorString;     // What went wrong (if anything)
     
-    // Processing options
-    bool autoCenter;
-    bool autoNormalize;
-    bool calculateNormals;
-    bool mergeVertices;
-    float vertexTolerance;
+    // User preferences for how to process the model
+    bool autoCenter;         // Should we move model to center?
+    bool autoNormalize;      // Should we scale model to standard size?
+    bool calculateNormals;   // Should we recalculate surface directions?
+    bool mergeVertices;      // Should we combine duplicate points?
+    float vertexTolerance;   // How close before we consider points identical?
     
-    // Constants
-    static const quint32 BINARY_STL_HEADER_SIZE = 80;
-    static const quint32 BINARY_STL_TRIANGLE_SIZE = 50; // 4 bytes per float * 12 floats + 2 bytes attribute
-    static const char* ASCII_STL_HEADER;
-    static const float DEFAULT_VERTEX_TOLERANCE;
+    // Important numbers for the STL file format
+    static const quint32 BINARY_STL_HEADER_SIZE = 80;      // Binary files start with 80-byte header
+    static const quint32 BINARY_STL_TRIANGLE_SIZE = 50;    // Each triangle takes exactly 50 bytes
+    static const char* ASCII_STL_HEADER;                   // Text files start with "solid"
+    static const float DEFAULT_VERTEX_TOLERANCE;           // Default distance for "same point"
 };
 
 #endif // STLLOADER_H

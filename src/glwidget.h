@@ -1,4 +1,4 @@
-// glwidget.h - Fixed version with proper resource management
+// OpenGL widget for rendering 3D models
 #ifndef GLWIDGET_H
 #define GLWIDGET_H
 
@@ -21,7 +21,7 @@ public:
     explicit GLWidget(QWidget *parent = nullptr);
     ~GLWidget();
 
-    // Public interface methods that MainWindow expects
+    // Public methods for external control
     void loadSTLFile(const QString &fileName);
     void resetCamera();
     void fitToWindow();
@@ -34,14 +34,17 @@ public:
     void setRotationZ(int degrees);
 
 signals:
-    void frameRendered();
-    void fileLoaded(const QString &filename, int triangles, int vertices);
+    // Signals sent to parent window
+    void frameRendered();                                                    // Emitted after each frame
+    void fileLoaded(const QString &filename, int triangles, int vertices);   // Emitted when STL loads successfully
 
 protected:
-    void initializeGL() override;
-    void paintGL() override;
-    void resizeGL(int width, int height) override;
+    // Qt OpenGL widget lifecycle methods
+    void initializeGL() override;        // Called once to set up OpenGL
+    void paintGL() override;             // Called every frame to draw
+    void resizeGL(int width, int height) override;  // Called when widget resizes
     
+    // Mouse and keyboard input handling
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
@@ -49,55 +52,55 @@ protected:
 
 private:
     // Setup and cleanup methods
-    void cleanup();
-    void cleanupModel();
-    bool setupShaders();
-    void setupDefaultGeometry();
-    void setupVertexBuffer(const QVector<float>& vertexData);
-    void calculateBoundingBox(const QVector<float>& vertexData);
+    void cleanup();                                      // Clean up all OpenGL resources
+    void cleanupModel();                                 // Clean up current model data
+    bool setupShaders();                                 // Create and compile shaders
+    void setupDefaultGeometry();                         // Create default cube geometry
+    void setupVertexBuffer(const QVector<float>& vertexData);  // Upload vertex data to GPU
+    void calculateBoundingBox(const QVector<float>& vertexData);  // Calculate model bounds
     
-    // OpenGL objects
-    QOpenGLShaderProgram *shaderProgram;
-    QOpenGLBuffer vertexBuffer;
-    QOpenGLBuffer indexBuffer;
-    QOpenGLVertexArrayObject vao;
+    // OpenGL objects (handles to GPU resources)
+    QOpenGLShaderProgram *shaderProgram;    // Compiled shader program
+    QOpenGLBuffer vertexBuffer;             // Vertex buffer object (VBO)
+    QOpenGLBuffer indexBuffer;              // Element buffer object (EBO)
+    QOpenGLVertexArrayObject vao;           // Vertex array object (VAO)
     
-    // Matrices
-    QMatrix4x4 projectionMatrix;
-    QMatrix4x4 viewMatrix;
-    QMatrix4x4 modelMatrix;
+    // Transformation matrices (4x4 matrices for 3D math)
+    QMatrix4x4 projectionMatrix;   // Camera projection (perspective/orthographic)
+    QMatrix4x4 viewMatrix;         // Camera position and orientation
+    QMatrix4x4 modelMatrix;        // Object position, rotation, scale
     
-    // Camera/view controls
-    float zoomFactor;
-    float rotationX, rotationY, rotationZ;
-    bool wireframeMode;
-    bool lightingEnabled;
+    // View control variables
+    float zoomFactor;                     // Scale multiplier for model
+    float rotationX, rotationY, rotationZ;  // Rotation angles in degrees
+    bool wireframeMode;                   // Draw wireframe instead of filled triangles
+    bool lightingEnabled;                 // Enable/disable lighting calculations
     
-    // Mouse interaction
-    QPoint lastMousePos;
-    bool mousePressed;
-    Qt::MouseButton mouseButton;
-    Camera *camera;
+    // Mouse interaction state
+    QPoint lastMousePos;        // Previous mouse position for delta calculation
+    bool mousePressed;          // Is any mouse button currently pressed
+    Qt::MouseButton mouseButton;  // Which mouse button is pressed
+    Camera *camera;             // Camera object for view control
     
-    // Model data
-    QVector<unsigned int> indices;
-    int triangleCount;
-    bool hasModel;
+    // Current model data
+    QVector<unsigned int> indices;  // Index buffer for vertex reuse
+    int triangleCount;              // Number of triangles in current model
+    bool hasModel;                  // Is a model currently loaded (vs default cube)
     
-    // Bounding box data
-    QVector3D modelMin;
-    QVector3D modelMax;
-    QVector3D modelCenter;
-    float modelRadius;
-    bool boundingBoxValid;
+    // Model bounding box data (for camera positioning)
+    QVector3D modelMin;       // Minimum coordinates of model
+    QVector3D modelMax;       // Maximum coordinates of model  
+    QVector3D modelCenter;    // Center point of model
+    float modelRadius;        // Distance from center to furthest point
+    bool boundingBoxValid;    // Is bounding box data valid
     
-    // Rendering
-    QTimer renderTimer;
+    // Rendering control
+    QTimer renderTimer;       // Timer for continuous rendering (~60 FPS)
     
     // State tracking
-    bool isInitialized;
+    bool isInitialized;       // Has OpenGL been properly initialized
 
-    // Default color for loaded STL object
+    // Default material color for rendered objects
     QVector3D defaultColor;
 };
 

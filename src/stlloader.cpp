@@ -6,16 +6,16 @@
 #include <algorithm>
 #include <cfloat>
 
-// Static constants
+// These are the magic numbers that define the STL file format
 const char* STLLoader::ASCII_STL_HEADER = "solid";
 const float STLLoader::DEFAULT_VERTEX_TOLERANCE = 1e-6f;
 
 STLLoader::STLLoader()
     : format(Unknown)
-    , autoCenter(true)
-    , autoNormalize(false)
-    , calculateNormals(false)
-    , mergeVertices(true)
+    , autoCenter(true)          // By default, center the model on screen
+    , autoNormalize(false)      // Don't resize by default
+    , calculateNormals(false)   // Use normals from file by default
+    , mergeVertices(true)       // Combine duplicate points by default
     , vertexTolerance(DEFAULT_VERTEX_TOLERANCE)
 {
 }
@@ -27,6 +27,7 @@ STLLoader::~STLLoader()
 
 void STLLoader::clear()
 {
+    // Throw away all the data and start fresh
     triangles.clear();
     vertices.clear();
     vertexData.clear();
@@ -42,9 +43,9 @@ STLLoader::LoadResult STLLoader::loadFile(const QString& fileName)
     clear();
     this->fileName = fileName;
     
-    qDebug() << "STLLoader: Starting to load file" << fileName;
+    qDebug() << "Starting to load STL file:" << fileName;
     
-    // Check if file exists
+    // Make sure the file actually exists and we can read it
     QFileInfo fileInfo(fileName);
     if (!fileInfo.exists()) {
         setError("File does not exist: " + fileName);
@@ -52,7 +53,7 @@ STLLoader::LoadResult STLLoader::loadFile(const QString& fileName)
     }
     
     if (!fileInfo.isReadable()) {
-        setError("File is not readable: " + fileName);
+        setError("Cannot read file (check permissions): " + fileName);
         return CannotOpenFile;
     }
     
@@ -61,18 +62,18 @@ STLLoader::LoadResult STLLoader::loadFile(const QString& fileName)
         return EmptyFile;
     }
     
-    qDebug() << "STLLoader: File exists and is readable, size:" << fileInfo.size();
+    qDebug() << "File looks good, size:" << fileInfo.size() << "bytes";
     
-    // Detect format
+    // Figure out if this is a binary or text STL file
     format = detectFormat(fileName);
     if (format == Unknown) {
-        setError("Unknown or unsupported STL format");
+        setError("This doesn't look like a valid STL file");
         return InvalidFormat;
     }
     
-    qDebug() << "STLLoader: Detected format:" << (format == Binary ? "Binary" : "ASCII");
+    qDebug() << "File format detected:" << (format == Binary ? "Binary STL" : "Text STL");
     
-    // Open file
+    // Open the file with the right settings
     QFile file(fileName);
     QIODevice::OpenMode openMode = (format == Binary) ? QIODevice::ReadOnly : (QIODevice::ReadOnly | QIODevice::Text);
     
@@ -83,7 +84,7 @@ STLLoader::LoadResult STLLoader::loadFile(const QString& fileName)
     
     LoadResult result = Success;
     
-    // Load based on format
+    // Load the file using the appropriate method
     try {
         if (format == Binary) {
             result = loadBinarySTL(file);
@@ -92,25 +93,25 @@ STLLoader::LoadResult STLLoader::loadFile(const QString& fileName)
         }
         
         if (result == Success) {
-            qDebug() << "STLLoader: File loaded successfully, processing triangles...";
+            qDebug() << "File loaded successfully, now processing the triangles...";
             processTriangles();
-            qDebug() << "STLLoader: Processing complete";
+            qDebug() << "All done processing";
         }
         
     } catch (const std::exception& e) {
-        setError(QString("Exception during loading: ") + e.what());
+        setError(QString("Something went wrong while reading: ") + e.what());
         result = ReadError;
     } catch (...) {
-        setError("Unknown exception during loading");
+        setError("Unknown error occurred while reading file");
         result = ReadError;
     }
     
     file.close();
     
     if (result != Success) {
-        clear();
+        clear();  // Something went wrong, throw away partial data
     } else {
-        qDebug() << "STLLoader: Successfully loaded" << triangles.size() << "triangles," << vertices.size() << "vertices";
+        qDebug() << "Success! Loaded" << triangles.size() << "triangles with" << vertices.size() << "vertices";
     }
     
     return result;
@@ -118,7 +119,7 @@ STLLoader::LoadResult STLLoader::loadFile(const QString& fileName)
 
 STLLoader::STLFormat STLLoader::detectFormat(const QString& fileName)
 {
-    // Try binary first (more reliable detection)
+    // Try binary detection first (it's more reliable)
     if (isBinarySTL(fileName)) {
         return Binary;
     } else if (isASCIISTL(fileName)) {
@@ -134,17 +135,17 @@ bool STLLoader::isBinarySTL(const QString& fileName)
         return false;
     }
     
-    // Check file size - binary STL has specific structure
+    // Binary STL files have a very specific structure
     qint64 fileSize = file.size();
-    if (fileSize < BINARY_STL_HEADER_SIZE + 4) { // Header + triangle count
+    if (fileSize < BINARY_STL_HEADER_SIZE + 4) { // Need at least header + triangle count
         file.close();
         return false;
     }
     
-    // Skip header
+    // Skip the 80-byte header (it's usually garbage)
     file.seek(BINARY_STL_HEADER_SIZE);
     
-    // Read triangle count
+    // Read how many triangles the file claims to have
     QDataStream stream(&file);
     stream.setByteOrder(QDataStream::LittleEndian);
     stream.setFloatingPointPrecision(QDataStream::SinglePrecision);
@@ -152,16 +153,16 @@ bool STLLoader::isBinarySTL(const QString& fileName)
     quint32 triangleCount;
     stream >> triangleCount;
     
-    // Calculate expected file size
+    // Calculate what the file size should be if this is really binary
     qint64 expectedSize = BINARY_STL_HEADER_SIZE + 4 + (triangleCount * BINARY_STL_TRIANGLE_SIZE);
     
     file.close();
     
-    // Binary STL should match expected size exactly
-    bool isBinary = (fileSize == expectedSize && triangleCount > 0 && triangleCount < 50000000); // Increased sanity check limit
+    // Binary STL files must match the expected size exactly
+    bool isBinary = (fileSize == expectedSize && triangleCount > 0 && triangleCount < 50000000);
     
     if (isBinary) {
-        qDebug() << "STLLoader: Detected binary STL, triangles:" << triangleCount << "expected size:" << expectedSize << "actual size:" << fileSize;
+        qDebug() << "This looks like binary STL:" << triangleCount << "triangles, expected size matches actual size";
     }
     
     return isBinary;
@@ -174,6 +175,7 @@ bool STLLoader::isASCIISTL(const QString& fileName)
         return false;
     }
     
+    // ASCII STL files always start with "solid"
     QTextStream stream(&file);
     QString firstLine = stream.readLine().trimmed().toLower();
     file.close();
@@ -181,7 +183,7 @@ bool STLLoader::isASCIISTL(const QString& fileName)
     bool isAscii = firstLine.startsWith("solid");
     
     if (isAscii) {
-        qDebug() << "STLLoader: Detected ASCII STL, first line:" << firstLine;
+        qDebug() << "This looks like text STL, first line:" << firstLine;
     }
     
     return isAscii;
@@ -189,73 +191,73 @@ bool STLLoader::isASCIISTL(const QString& fileName)
 
 STLLoader::LoadResult STLLoader::loadBinarySTL(QFile& file)
 {
-    qDebug() << "STLLoader: Loading binary STL...";
+    qDebug() << "Reading binary STL file...";
     
     if (file.size() < BINARY_STL_HEADER_SIZE + 4) {
-        setError("File too small for binary STL format");
+        setError("File is too small to be a valid binary STL");
         return CorruptedFile;
     }
     
     QDataStream stream(&file);
-    stream.setByteOrder(QDataStream::LittleEndian);
+    stream.setByteOrder(QDataStream::LittleEndian);  // STL uses little-endian byte order
     stream.setFloatingPointPrecision(QDataStream::SinglePrecision);
     
-    // Skip 80-byte header
+    // Jump past the 80-byte header (it's usually meaningless)
     file.seek(BINARY_STL_HEADER_SIZE);
     
-    // Read triangle count
+    // Read the number of triangles
     quint32 triangleCount;
     stream >> triangleCount;
     
     if (triangleCount == 0) {
-        setError("STL file contains no triangles");
+        setError("This STL file contains no triangles");
         return EmptyFile;
     }
     
-    if (triangleCount > 50000000) { // Increased sanity check
-        setError("Triangle count seems unreasonably large: " + QString::number(triangleCount));
+    if (triangleCount > 50000000) {
+        setError("This file claims to have an unreasonable number of triangles: " + QString::number(triangleCount));
         return CorruptedFile;
     }
     
-    qDebug() << "STLLoader: Binary STL contains" << triangleCount << "triangles";
+    qDebug() << "File contains" << triangleCount << "triangles";
     
-    // Reserve space for efficiency
+    // Make room for all the triangles we're about to read
     triangles.reserve(triangleCount);
     
-    // Read triangles
+    // Read each triangle
     for (quint32 i = 0; i < triangleCount; ++i) {
         STLTriangle triangle;
         
-        // Read normal vector
+        // Each triangle starts with its normal vector (surface direction)
         float nx, ny, nz;
         stream >> nx >> ny >> nz;
         
-        // Check for NaN or infinite values
+        // Make sure the numbers make sense (not corrupted)
         if (qIsNaN(nx) || qIsInf(nx) || qIsNaN(ny) || qIsInf(ny) || qIsNaN(nz) || qIsInf(nz)) {
-            qWarning() << "STLLoader: Invalid normal at triangle" << i << "- skipping";
+            qWarning() << "Triangle" << i << "has invalid normal vector - skipping";
             continue;
         }
         
         triangle.normal = QVector3D(nx, ny, nz);
         
-        // Read vertices
+        // Now read the three corners of the triangle
         float v1x, v1y, v1z, v2x, v2y, v2z, v3x, v3y, v3z;
         stream >> v1x >> v1y >> v1z;
         stream >> v2x >> v2y >> v2z;
         stream >> v3x >> v3y >> v3z;
         
-        // Check for NaN or infinite values in vertices
+        // Check all coordinates for corruption
         float coords[] = {v1x, v1y, v1z, v2x, v2y, v2z, v3x, v3y, v3z};
-        bool hasInvalidCoord = false;
+        bool hasCorruptedData = false;
         for (int j = 0; j < 9; ++j) {
             if (qIsNaN(coords[j]) || qIsInf(coords[j])) {
-                hasInvalidCoord = true;
+                hasCorruptedData = true;
                 break;
             }
         }
         
-        if (hasInvalidCoord) {
-            qWarning() << "STLLoader: Invalid vertex coordinates at triangle" << i << "- skipping";
+        if (hasCorruptedData) {
+            qWarning() << "Triangle" << i << "has corrupted vertex data - skipping";
             continue;
         }
         
@@ -263,59 +265,59 @@ STLLoader::LoadResult STLLoader::loadBinarySTL(QFile& file)
         triangle.vertex2 = QVector3D(v2x, v2y, v2z);
         triangle.vertex3 = QVector3D(v3x, v3y, v3z);
         
-        // Skip 2-byte attribute
+        // Skip the 2-byte "attribute" field (usually unused)
         quint16 attribute;
         stream >> attribute;
         
-        // Check for read errors
+        // Make sure we didn't hit any read errors
         if (stream.status() != QDataStream::Ok) {
-            setError(QString("Error reading triangle %1").arg(i));
+            setError(QString("Error reading triangle %1 from file").arg(i));
             return ReadError;
         }
         
-        // Validate triangle and add if valid
+        // Only keep triangles that actually make sense geometrically
         if (isValidTriangle(triangle)) {
             triangles.append(triangle);
         } else {
-            qWarning() << "STLLoader: Degenerate triangle at index" << i << "- skipping";
+            qWarning() << "Triangle" << i << "is degenerate (zero area) - skipping";
         }
         
-        // Progress reporting for large files
+        // Show progress for big files
         if (i % 10000 == 0 && i > 0) {
-            qDebug() << "STLLoader: Processed" << i << "/" << triangleCount << "triangles";
+            qDebug() << "Read" << i << "/" << triangleCount << "triangles so far...";
         }
     }
     
     if (triangles.isEmpty()) {
-        setError("No valid triangles found in file");
+        setError("No valid triangles found in this file");
         return EmptyFile;
     }
     
-    qDebug() << "STLLoader: Successfully loaded" << triangles.size() << "valid triangles from binary STL";
+    qDebug() << "Successfully read" << triangles.size() << "valid triangles from binary STL";
     return Success;
 }
 
 STLLoader::LoadResult STLLoader::loadASCIISTL(QFile& file)
 {
-    qDebug() << "STLLoader: Loading ASCII STL...";
+    qDebug() << "Reading text STL file...";
     
     QTextStream stream(&file);
     QString line;
     int lineNumber = 0;
     
-    // Read first line - should start with "solid"
+    // First line should be "solid <optional name>"
     line = stream.readLine().trimmed();
     lineNumber++;
     
     if (!line.toLower().startsWith("solid")) {
-        setError(QString("Invalid ASCII STL header at line %1").arg(lineNumber));
+        setError(QString("Text STL should start with 'solid' but line %1 says: %2").arg(lineNumber).arg(line));
         return InvalidFormat;
     }
     
     STLTriangle currentTriangle;
     int vertexCount = 0;
-    bool inFacet = false;
-    bool inLoop = false;
+    bool inFacet = false;     // Are we currently reading a triangle?
+    bool inLoop = false;      // Are we currently reading the triangle's vertices?
     int trianglesParsed = 0;
     
     while (!stream.atEnd()) {
@@ -323,33 +325,34 @@ STLLoader::LoadResult STLLoader::loadASCIISTL(QFile& file)
         lineNumber++;
         
         if (line.isEmpty() || line.startsWith("#")) {
-            continue; // Skip empty lines and comments
+            continue; // Skip blank lines and comments
         }
         
         QString keyword;
         QStringList values;
         if (!parseASCIILine(line, keyword, values)) {
-            continue; // Skip malformed lines
+            continue; // Skip lines we can't understand
         }
         
         if (keyword == "facet" && values.size() >= 4 && values[0] == "normal") {
+            // Starting a new triangle
             if (inFacet) {
-                setError(QString("Unexpected 'facet' at line %1 - previous facet not closed").arg(lineNumber));
+                setError(QString("Line %1: Found new triangle before finishing previous one").arg(lineNumber));
                 return CorruptedFile;
             }
             
-            // Parse normal vector
+            // Read the surface normal (direction the triangle faces)
             bool ok1, ok2, ok3;
             float nx = values[1].toFloat(&ok1);
             float ny = values[2].toFloat(&ok2);
             float nz = values[3].toFloat(&ok3);
             
             if (!ok1 || !ok2 || !ok3) {
-                qWarning() << "STLLoader: Invalid normal vector at line" << lineNumber << "- using zero normal";
+                qWarning() << "Line" << lineNumber << ": Can't read normal vector, using default";
                 nx = ny = nz = 0.0f;
             }
             
-            // Check for NaN or infinite values
+            // Fix any corrupted values
             if (qIsNaN(nx) || qIsInf(nx)) nx = 0.0f;
             if (qIsNaN(ny) || qIsInf(ny)) ny = 0.0f;
             if (qIsNaN(nz) || qIsInf(nz)) nz = 0.0f;
@@ -359,15 +362,17 @@ STLLoader::LoadResult STLLoader::loadASCIISTL(QFile& file)
             vertexCount = 0;
             
         } else if (keyword == "outer" && values.size() >= 1 && values[0] == "loop") {
+            // Starting to read the triangle's corner points
             if (!inFacet || inLoop) {
-                setError(QString("Unexpected 'outer loop' at line %1").arg(lineNumber));
+                setError(QString("Line %1: 'outer loop' in wrong place").arg(lineNumber));
                 return CorruptedFile;
             }
             inLoop = true;
             
         } else if (keyword == "vertex" && values.size() >= 3) {
+            // Reading one corner point of the triangle
             if (!inLoop) {
-                setError(QString("Vertex outside loop at line %1").arg(lineNumber));
+                setError(QString("Line %1: Found vertex outside of loop").arg(lineNumber));
                 return CorruptedFile;
             }
             
@@ -377,18 +382,19 @@ STLLoader::LoadResult STLLoader::loadASCIISTL(QFile& file)
             float vz = values[2].toFloat(&ok3);
             
             if (!ok1 || !ok2 || !ok3) {
-                setError(QString("Invalid vertex coordinates at line %1").arg(lineNumber));
+                setError(QString("Line %1: Cannot read vertex coordinates").arg(lineNumber));
                 return CorruptedFile;
             }
             
-            // Check for NaN or infinite values
+            // Check for corrupted coordinate values
             if (qIsNaN(vx) || qIsInf(vx) || qIsNaN(vy) || qIsInf(vy) || qIsNaN(vz) || qIsInf(vz)) {
-                setError(QString("Invalid vertex coordinates (NaN/Inf) at line %1").arg(lineNumber));
+                setError(QString("Line %1: Vertex has corrupted coordinates").arg(lineNumber));
                 return CorruptedFile;
             }
             
             QVector3D vertex(vx, vy, vz);
             
+            // Store this vertex in the right position
             if (vertexCount == 0) {
                 currentTriangle.vertex1 = vertex;
             } else if (vertexCount == 1) {
@@ -396,164 +402,170 @@ STLLoader::LoadResult STLLoader::loadASCIISTL(QFile& file)
             } else if (vertexCount == 2) {
                 currentTriangle.vertex3 = vertex;
             } else {
-                setError(QString("Too many vertices in facet at line %1").arg(lineNumber));
+                setError(QString("Line %1: Triangle has too many vertices").arg(lineNumber));
                 return CorruptedFile;
             }
             vertexCount++;
             
         } else if (keyword == "endloop") {
+            // Finished reading the triangle's vertices
             if (!inLoop) {
-                setError(QString("'endloop' without 'outer loop' at line %1").arg(lineNumber));
+                setError(QString("Line %1: 'endloop' without matching 'outer loop'").arg(lineNumber));
                 return CorruptedFile;
             }
             
             if (vertexCount != 3) {
-                setError(QString("Facet has %1 vertices instead of 3 at line %2").arg(vertexCount).arg(lineNumber));
+                setError(QString("Line %1: Triangle has %2 vertices but should have exactly 3").arg(lineNumber).arg(vertexCount));
                 return CorruptedFile;
             }
             
             inLoop = false;
             
         } else if (keyword == "endfacet") {
+            // Finished reading this triangle completely
             if (!inFacet || inLoop) {
-                setError(QString("'endfacet' without proper 'facet' at line %1").arg(lineNumber));
+                setError(QString("Line %1: 'endfacet' without proper triangle structure").arg(lineNumber));
                 return CorruptedFile;
             }
             
-            // Validate and add triangle
+            // Check if this triangle makes geometric sense and save it
             if (isValidTriangle(currentTriangle)) {
                 triangles.append(currentTriangle);
                 trianglesParsed++;
                 
-                // Progress reporting for large files
+                // Show progress for large files
                 if (trianglesParsed % 1000 == 0) {
-                    qDebug() << "STLLoader: Parsed" << trianglesParsed << "triangles...";
+                    qDebug() << "Parsed" << trianglesParsed << "triangles so far...";
                 }
             } else {
-                qWarning() << "STLLoader: Degenerate triangle at line" << lineNumber << "- skipping";
+                qWarning() << "Line" << lineNumber << ": Triangle has zero area - skipping";
             }
             
             inFacet = false;
             
         } else if (keyword == "endsolid") {
-            break; // End of model
+            break; // We've reached the end of the model
         }
     }
     
     if (triangles.isEmpty()) {
-        setError("No valid triangles found in ASCII STL file");
+        setError("No valid triangles found in text STL file");
         return EmptyFile;
     }
     
-    qDebug() << "STLLoader: Successfully loaded" << triangles.size() << "valid triangles from ASCII STL";
+    qDebug() << "Successfully read" << triangles.size() << "valid triangles from text STL";
     return Success;
 }
 
 void STLLoader::processTriangles()
 {
     if (triangles.isEmpty()) {
-        qWarning() << "STLLoader: No triangles to process";
+        qWarning() << "No triangles to process";
         return;
     }
     
-    qDebug() << "STLLoader: Processing" << triangles.size() << "triangles...";
+    qDebug() << "Processing" << triangles.size() << "triangles...";
     
-    // Calculate bounding box first
+    // First, figure out how big the model is and where it sits
     calculateBoundingBox();
     
-    // Center model if requested
+    // Move the model to the center of the screen if requested
     if (autoCenter) {
-        qDebug() << "STLLoader: Centering model...";
+        qDebug() << "Moving model to center of screen...";
         centerModel();
     }
     
-    // Normalize model if requested
+    // Scale the model to a standard size if requested
     if (autoNormalize) {
-        qDebug() << "STLLoader: Normalizing model...";
+        qDebug() << "Scaling model to standard size...";
         normalizeModel();
     }
     
-    // Generate vertex buffer
-    qDebug() << "STLLoader: Generating vertex buffer...";
+    // Convert triangles into format that graphics card can use efficiently
+    qDebug() << "Converting to graphics format...";
     generateVertexBuffer();
     
-    // Generate indices if vertex merging is enabled
+    // Combine duplicate vertices to save memory if requested
     if (mergeVertices) {
-        qDebug() << "STLLoader: Merging vertices and generating indices...";
+        qDebug() << "Removing duplicate vertices...";
         generateIndices();
     }
     
-    qDebug() << "STLLoader: Processing complete. Final vertex count:" << vertices.size();
+    qDebug() << "Processing complete. Final model has" << vertices.size() << "vertices";
 }
 
 void STLLoader::calculateBoundingBox()
 {
     boundingBox.reset();
     
+    // Look at every corner of every triangle to find the extremes
     for (const STLTriangle& triangle : triangles) {
         boundingBox.update(triangle.vertex1);
         boundingBox.update(triangle.vertex2);
         boundingBox.update(triangle.vertex3);
     }
     
+    // Calculate the center, size, etc.
     boundingBox.finalize();
     
-    qDebug() << "STLLoader: Bounding box calculated:";
-    qDebug() << "  Min:" << boundingBox.min;
-    qDebug() << "  Max:" << boundingBox.max;
-    qDebug() << "  Center:" << boundingBox.center;
-    qDebug() << "  Size:" << boundingBox.size;
-    qDebug() << "  Max dimension:" << boundingBox.maxDimension;
+    qDebug() << "Model bounding box calculated:";
+    qDebug() << "  Bottom-left-back corner:" << boundingBox.min;
+    qDebug() << "  Top-right-front corner:" << boundingBox.max;
+    qDebug() << "  Center point:" << boundingBox.center;
+    qDebug() << "  Dimensions:" << boundingBox.size;
+    qDebug() << "  Largest dimension:" << boundingBox.maxDimension;
 }
 
 void STLLoader::centerModel()
 {
     if (!boundingBox.isValid()) {
-        qWarning() << "STLLoader: Cannot center model - invalid bounding box";
+        qWarning() << "Cannot center model - bounding box is invalid";
         return;
     }
     
+    // Calculate how far to move the model to center it at (0,0,0)
     QVector3D offset = -boundingBox.center;
     
-    // Apply offset to all triangles
+    // Move every triangle by this offset
     for (STLTriangle& triangle : triangles) {
         triangle.vertex1 += offset;
         triangle.vertex2 += offset;
         triangle.vertex3 += offset;
     }
     
-    // Update bounding box
+    // Update our bounding box info
     boundingBox.min += offset;
     boundingBox.max += offset;
     boundingBox.center = QVector3D(0, 0, 0);
     
-    qDebug() << "STLLoader: Model centered with offset:" << offset;
+    qDebug() << "Model centered by moving it" << offset;
 }
 
 void STLLoader::normalizeModel()
 {
     if (!boundingBox.isValid() || boundingBox.maxDimension <= 0) {
-        qWarning() << "STLLoader: Cannot normalize model - invalid bounding box or zero dimension";
+        qWarning() << "Cannot resize model - invalid dimensions";
         return;
     }
     
-    float scale = 2.0f / boundingBox.maxDimension; // Scale to fit in [-1, 1]
+    // Scale factor to make the largest dimension equal to 2 (so model fits in -1 to +1 box)
+    float scale = 2.0f / boundingBox.maxDimension;
     
-    // Apply scale to all triangles
+    // Scale every triangle by this factor
     for (STLTriangle& triangle : triangles) {
         triangle.vertex1 *= scale;
         triangle.vertex2 *= scale;
         triangle.vertex3 *= scale;
     }
     
-    // Update bounding box
+    // Update our bounding box info
     boundingBox.min *= scale;
     boundingBox.max *= scale;
     boundingBox.center *= scale;
     boundingBox.size *= scale;
     boundingBox.maxDimension *= scale;
     
-    qDebug() << "STLLoader: Model normalized with scale:" << scale;
+    qDebug() << "Model scaled by factor of" << scale;
 }
 
 void STLLoader::generateVertexBuffer()
@@ -561,33 +573,35 @@ void STLLoader::generateVertexBuffer()
     vertices.clear();
     vertexData.clear();
     
-    int totalVertices = triangles.size() * 3;
+    int totalVertices = triangles.size() * 3;  // Each triangle has 3 corners
     vertices.reserve(totalVertices);
-    vertexData.reserve(totalVertices * 6); // 3 vertices * 6 floats (pos + normal)
+    vertexData.reserve(totalVertices * 6); // Each vertex needs 6 numbers: 3 for position, 3 for normal
     
     for (const STLTriangle& triangle : triangles) {
         QVector3D normal = triangle.normal;
         
-        // Calculate normal if not provided or if requested
+        // If the file didn't provide good normals, or we want to recalculate them
         if (calculateNormals || normal.lengthSquared() < 0.001f) {
             normal = calculateTriangleNormal(triangle.vertex1, triangle.vertex2, triangle.vertex3);
         }
         
-        // Ensure normal is normalized
+        // Make sure the normal vector has length 1
         if (normal.lengthSquared() > 0.001f) {
             normal.normalize();
         } else {
-            // Default normal if calculation fails
+            // If we can't calculate a good normal, use a default
             normal = QVector3D(0, 0, 1);
         }
         
-        // Add vertices
+        // Create vertex objects for each corner of the triangle
         vertices.append(STLVertex(triangle.vertex1, normal));
         vertices.append(STLVertex(triangle.vertex2, normal));
         vertices.append(STLVertex(triangle.vertex3, normal));
         
-        // Add to interleaved vertex data (position + normal)
-        // Vertex 1
+        // Also create the raw data array that OpenGL graphics can use directly
+        // For each vertex: x, y, z, normal_x, normal_y, normal_z
+        
+        // First corner
         vertexData.append(triangle.vertex1.x());
         vertexData.append(triangle.vertex1.y());
         vertexData.append(triangle.vertex1.z());
@@ -595,7 +609,7 @@ void STLLoader::generateVertexBuffer()
         vertexData.append(normal.y());
         vertexData.append(normal.z());
         
-        // Vertex 2
+        // Second corner
         vertexData.append(triangle.vertex2.x());
         vertexData.append(triangle.vertex2.y());
         vertexData.append(triangle.vertex2.z());
@@ -603,7 +617,7 @@ void STLLoader::generateVertexBuffer()
         vertexData.append(normal.y());
         vertexData.append(normal.z());
         
-        // Vertex 3
+        // Third corner
         vertexData.append(triangle.vertex3.x());
         vertexData.append(triangle.vertex3.y());
         vertexData.append(triangle.vertex3.z());
@@ -612,31 +626,32 @@ void STLLoader::generateVertexBuffer()
         vertexData.append(normal.z());
     }
     
-    qDebug() << "STLLoader: Generated vertex buffer with" << vertices.size() << "vertices and" << vertexData.size() << "float values";
+    qDebug() << "Created vertex buffer with" << vertices.size() << "vertices (" << vertexData.size() << "numbers total)";
 }
 
 void STLLoader::generateIndices()
 {
     if (vertices.isEmpty()) {
-        qWarning() << "STLLoader: Cannot generate indices - no vertices";
+        qWarning() << "Cannot create indices - no vertices available";
         return;
     }
     
     QVector<STLVertex> uniqueVertices;
     indices.clear();
     
-    uniqueVertices.reserve(vertices.size() / 2); // Estimate
+    uniqueVertices.reserve(vertices.size() / 2); // Rough guess at number of unique vertices
     indices.reserve(vertices.size());
     
+    // Go through every vertex and either find an existing identical one or add it as new
     for (const STLVertex& vertex : vertices) {
         int index = findOrAddVertex(uniqueVertices, vertex);
         indices.append(index);
     }
     
-    // Update vertices to unique set
+    // Replace our vertex list with just the unique ones
     vertices = uniqueVertices;
     
-    // Regenerate vertex data
+    // Rebuild the raw data array for the unique vertices
     vertexData.clear();
     vertexData.reserve(vertices.size() * 6);
     
@@ -649,19 +664,21 @@ void STLLoader::generateIndices()
         vertexData.append(vertex.normal.z());
     }
     
-    qDebug() << "STLLoader: Generated" << indices.size() << "indices for" << vertices.size() << "unique vertices";
+    qDebug() << "Created" << indices.size() << "indices pointing to" << vertices.size() << "unique vertices";
 }
 
 QVector3D STLLoader::calculateTriangleNormal(const QVector3D& v1, const QVector3D& v2, const QVector3D& v3)
 {
-    QVector3D edge1 = v2 - v1;
-    QVector3D edge2 = v3 - v1;
+    // Calculate which direction this triangle face is pointing
+    // We do this using the "cross product" of two edges of the triangle
+    QVector3D edge1 = v2 - v1;  // Vector from first to second corner
+    QVector3D edge2 = v3 - v1;  // Vector from first to third corner
     QVector3D normal = QVector3D::crossProduct(edge1, edge2);
     
-    if (normal.lengthSquared() > 1e-12f) { // More strict check
-        normal.normalize();
+    if (normal.lengthSquared() > 1e-12f) {
+        normal.normalize();  // Make it length 1
     } else {
-        // Return a default normal for degenerate triangles
+        // Triangle is too small or degenerate, use default normal
         normal = QVector3D(0, 0, 1);
     }
     
@@ -671,24 +688,24 @@ QVector3D STLLoader::calculateTriangleNormal(const QVector3D& v1, const QVector3
 void STLLoader::setError(const QString& error)
 {
     errorString = error;
-    qWarning() << "STLLoader Error:" << error;
+    qWarning() << "STL Loader Error:" << error;
 }
 
 bool STLLoader::isValidTriangle(const STLTriangle& triangle)
 {
-    // Check for degenerate triangles with more strict criteria
+    // Check if this triangle actually has area (isn't just a line or point)
     QVector3D edge1 = triangle.vertex2 - triangle.vertex1;
     QVector3D edge2 = triangle.vertex3 - triangle.vertex1;
     QVector3D cross = QVector3D::crossProduct(edge1, edge2);
     
     float area = cross.length() * 0.5f;
     
-    // Check if area is above threshold and vertices are not coincident
+    // If area is too small, this triangle is useless
     if (area < 1e-10f) {
         return false;
     }
     
-    // Check if all vertices are the same
+    // Check if any two vertices are the same (which would make area zero)
     if ((triangle.vertex1 - triangle.vertex2).lengthSquared() < 1e-12f ||
         (triangle.vertex2 - triangle.vertex3).lengthSquared() < 1e-12f ||
         (triangle.vertex3 - triangle.vertex1).lengthSquared() < 1e-12f) {
@@ -700,42 +717,45 @@ bool STLLoader::isValidTriangle(const STLTriangle& triangle)
 
 int STLLoader::findOrAddVertex(QVector<STLVertex>& uniqueVertices, const STLVertex& vertex)
 {
-    // Find existing vertex within tolerance
+    // Look through existing vertices to see if we already have this one
     for (int i = 0; i < uniqueVertices.size(); ++i) {
         if (verticesEqual(uniqueVertices[i], vertex, vertexTolerance)) {
-            return i;
+            return i;  // Found existing vertex, return its index
         }
     }
     
-    // Add new vertex
+    // This is a new vertex, add it to the list
     uniqueVertices.append(vertex);
-    return uniqueVertices.size() - 1;
+    return uniqueVertices.size() - 1;  // Return index of the new vertex
 }
 
 bool STLLoader::verticesEqual(const STLVertex& a, const STLVertex& b, float tolerance)
 {
+    // Two vertices are considered the same if they're very close together
     return (a.position - b.position).lengthSquared() < tolerance * tolerance;
 }
 
 bool STLLoader::parseASCIILine(const QString& line, QString& keyword, QStringList& values)
 {
+    // Split a line like "vertex 1.0 2.0 3.0" into keyword="vertex" and values=["1.0", "2.0", "3.0"]
     QStringList tokens = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
     
     if (tokens.isEmpty()) {
         return false;
     }
     
-    keyword = tokens[0].toLower();
-    values = tokens.mid(1);
+    keyword = tokens[0].toLower();  // First word is the command
+    values = tokens.mid(1);         // Rest are the parameters
     
     return true;
 }
 
 QString STLLoader::getFormatString() const
 {
+    // Convert the format enum to human-readable text
     switch (format) {
         case Binary: return "Binary STL";
-        case ASCII: return "ASCII STL";
-        default: return "Unknown";
+        case ASCII: return "Text STL";
+        default: return "Unknown format";
     }
 }

@@ -12,7 +12,7 @@
 #include <QApplication>
 #include <iostream>
 
-// Helper for arcball mapping
+// Convert mouse coordinates to 3D sphere coordinates (used for smooth rotation)
 static QVector3D mapToArcball(int x, int y, int w, int h) {
     float nx = (2.0f * x - w) / w;
     float ny = (h - 2.0f * y) / h;
@@ -50,9 +50,9 @@ GLWidget::GLWidget(QWidget *parent)
     // Set focus policy to receive key events
     setFocusPolicy(Qt::StrongFocus);
     
-    // Don't create camera tutaj - czekaj na kontekst OpenGL
-
-    // Ustaw domyślny kolor (jasnoszary)
+    // Camera will be created later when OpenGL context is ready
+    
+    // Set default material color to light gray
     defaultColor = QVector3D(0.8f, 0.8f, 0.8f);
 }
 
@@ -61,7 +61,7 @@ GLWidget::~GLWidget()
     std::cout << "GLWidget: Destructor called" << std::endl;
     qDebug() << "GLWidget: Destructor called";
     
-    // Ensure proper cleanup - this will stop timers and clean up OpenGL resources
+    // Stop timers and free up graphics card memory
     cleanup();
     
     std::cout << "GLWidget: Destructor complete" << std::endl;
@@ -83,7 +83,7 @@ void GLWidget::cleanup()
         
         qDebug() << "GLWidget: Cleaning up OpenGL resources...";
         
-        // Clean up OpenGL resources in proper order
+        // Free up graphics card memory in the right order
         if (vao.isCreated()) {
             vao.destroy();
         }
@@ -118,7 +118,7 @@ void GLWidget::cleanup()
 
 void GLWidget::initializeGL()
 {
-    // Initialize OpenGL functions
+    // Load OpenGL function pointers that we'll need
     initializeOpenGLFunctions();
 
     // Check OpenGL version
@@ -152,28 +152,28 @@ void GLWidget::initializeGL()
     camera = new Camera();
     camera->setPerspective(45.0f, float(width()) / float(height()), 0.1f, 100.0f);
 
-    // Initialize matrices
+    // Set up transformation matrices
     modelMatrix.setToIdentity();
     viewMatrix.setToIdentity();
     viewMatrix.lookAt(QVector3D(0, 0, 5), QVector3D(0, 0, 0), QVector3D(0, 1, 0));
 
-    // Mark as initialized BEFORE creating default geometry
+    // We're ready to start drawing
     isInitialized = true;
     
-    // Create cube as default geometry - NOW the context is ready
+    // Create a default cube to show when no 3D model is loaded
     setupDefaultGeometry();
 
-    // Don't start continuous timer - only update when needed
-    // This prevents potential resource exhaustion from continuous rendering
+    // We don't use continuous rendering to save CPU/GPU resources
+    // The display only updates when something changes (mouse, new model, etc.)
     // connect(&renderTimer, &QTimer::timeout, this, QOverload<>::of(&GLWidget::update));
-    // renderTimer.start(33); // Disabled continuous rendering
+    // renderTimer.start(33); // This would update 30 times per second - disabled
     
     qDebug() << "OpenGL initialized successfully";
 }
 
 void GLWidget::paintGL()
 {
-    // Ensure we're initialized and have valid context
+    // Make sure OpenGL is ready before we try to draw anything
     if (!isInitialized || !context() || !context()->isValid()) {
         qDebug() << "GLWidget::paintGL: Not initialized or invalid context";
         return;
@@ -185,7 +185,7 @@ void GLWidget::paintGL()
         static int frameCounter = 0;
         frameCounter++;
         
-        // Log every 100 frames to track progress
+        // Print debug info every 100 frames so we can see what's happening
         if (frameCounter % 100 == 0) {
             qDebug() << "GLWidget::paintGL: Frame" << frameCounter << "- hasModel:" << hasModel << "triangleCount:" << triangleCount;
         }
@@ -258,7 +258,7 @@ void GLWidget::paintGL()
     
     modelMatrix.setToIdentity();
     
-    // Validate transformation values before applying them
+    // Make sure zoom and rotation values are valid numbers before using them
     if (!qIsFinite(zoomFactor) || zoomFactor <= 0.0f) {
         qWarning() << "Invalid zoom factor detected:" << zoomFactor << "- resetting to 1.0";
         zoomFactor = 1.0f;
@@ -277,7 +277,7 @@ void GLWidget::paintGL()
     QMatrix4x4 mvpMatrix = projectionMatrix * viewMatrix * modelMatrix;
     QMatrix4x4 normalMatrix = modelMatrix.inverted().transposed();
 
-    // Validate matrices before sending to shader
+    // Check that our transformation matrices contain valid numbers
     bool validMatrices = true;
     for (int i = 0; i < 16; i++) {
         if (!qIsFinite(mvpMatrix.data()[i]) || !qIsFinite(normalMatrix.data()[i])) {
@@ -333,13 +333,13 @@ void GLWidget::paintGL()
         shaderProgram->setUniformValue("u_specularStrength", 0.5f);
         shaderProgram->setUniformValue("u_shininess", 32.0f);
 
-        // Material uniforms
+        // Choose colors: blue-gray for STL models, red for default cube
         QVector3D materialColor = hasModel ? QVector3D(0.8f, 0.8f, 0.9f) : QVector3D(0.7f, 0.3f, 0.3f);
         shaderProgram->setUniformValue("u_materialColor", materialColor);
         shaderProgram->setUniformValue("u_wireframe", wireframeMode);
         shaderProgram->setUniformValue("u_lightingEnabled", lightingEnabled);
         
-        // Additional lighting parameters
+        // Set up realistic lighting values for nice visual appearance
         shaderProgram->setUniformValue("u_diffuseStrength", 0.7f);
         shaderProgram->setUniformValue("u_lightConstant", 1.0f);
         shaderProgram->setUniformValue("u_lightLinear", 0.09f);
@@ -362,17 +362,17 @@ void GLWidget::paintGL()
         qWarning() << "OpenGL error before drawing:" << error;
     }
     
-    // Drawing logic with proper error checking
+    // Choose how to draw based on whether we have a loaded 3D model or default cube
     if (hasModel && !indices.isEmpty()) {
-        // Draw indexed geometry for STL models
+        // Draw STL models using indexed triangles (more efficient)
         int indexCount = indices.size();
         qDebug() << "Drawing STL with" << indexCount << "indices";
         
-        // Add bounds checking for draw call
+        // Make sure we have a reasonable number of triangles to draw
         if (indexCount > 0 && indexCount < 1000000) { // Sanity check
             qDebug() << "About to call glDrawElements with" << indexCount << "indices";
 
-            // Use glDrawElements with proper type
+            // Tell OpenGL to draw triangles using our index list
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer.bufferId());
             
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_INT, 0);
@@ -390,7 +390,7 @@ void GLWidget::paintGL()
             qWarning() << "Invalid index count for drawing:" << indexCount;
         }
     } else {
-        // Draw non-indexed geometry for default cube
+        // Draw the default cube using simple triangle vertices
         int vertexCount = triangleCount * 3;
         static bool logged = false;
         if (!logged) {
@@ -473,12 +473,12 @@ void GLWidget::mouseMoveEvent(QMouseEvent *event)
         qDebug() << "GLWidget::mouseMoveEvent: Delta" << delta << "Button" << mouseButton;
         
         if (mouseButton == Qt::LeftButton) {
-            // Simple rotation
+            // Rotate the model when dragging with left mouse button
             float sensitivity = 0.5f;
             rotationY += delta.x() * sensitivity;
             rotationX += delta.y() * sensitivity;
             
-            // Clamp rotations
+            // Keep rotation values between -360 and +360 degrees
             while (rotationX > 360.0f) rotationX -= 360.0f;
             while (rotationX < -360.0f) rotationX += 360.0f;
             while (rotationY > 360.0f) rotationY -= 360.0f;
@@ -486,7 +486,7 @@ void GLWidget::mouseMoveEvent(QMouseEvent *event)
             
             qDebug() << "GLWidget::mouseMoveEvent: New rotations X:" << rotationX << "Y:" << rotationY;
         } else if (mouseButton == Qt::RightButton && camera) {
-            // Pan
+            // Move the view around when dragging with right mouse button
             float panSensitivity = 0.01f; // Lower value for less sensitivity
             float panX = float(delta.x()) * panSensitivity;
             float panY = float(-delta.y()) * panSensitivity;
@@ -513,13 +513,13 @@ void GLWidget::wheelEvent(QWheelEvent *event)
         return;
     }
     
-    // Zoom with mouse wheel
+    // Use mouse wheel to zoom in and out
     float delta = event->angleDelta().y() / 120.0f;
     float zoomSpeed = 0.1f;
     
     qDebug() << "GLWidget::wheelEvent: Delta" << delta << "Current zoom:" << zoomFactor;
     
-    // Validate delta before proceeding
+    // Make sure we got a sensible scroll value
     if (!qIsFinite(delta) || qAbs(delta) > 10.0f) {
         qWarning() << "GLWidget::wheelEvent: Invalid delta value:" << delta;
         return;
@@ -528,7 +528,7 @@ void GLWidget::wheelEvent(QWheelEvent *event)
     if (camera) {
         float factor = 1.0f - delta * zoomSpeed * 0.1f;
         
-        // Validate zoom factor before passing to camera
+        // Make sure zoom factor makes sense before using it
         if (!qIsFinite(factor) || factor <= 0.001f || factor > 1000.0f) {
             qWarning() << "GLWidget::wheelEvent: Invalid zoom factor:" << factor << "- skipping";
             return;
@@ -557,7 +557,7 @@ void GLWidget::wheelEvent(QWheelEvent *event)
 
 bool GLWidget::setupShaders()
 {
-    // Enhanced vertex shader
+    // Vertex shader - processes each vertex position and normal
     const char* vertexShaderSource = R"(
         #version 330 core
         
@@ -595,7 +595,7 @@ bool GLWidget::setupShaders()
         }
     )";
     
-    // Enhanced fragment shader
+    // Fragment shader - calculates final pixel colors with lighting
     const char* fragmentShaderSource = R"(
         #version 330 core
         
@@ -707,7 +707,8 @@ void GLWidget::setupDefaultGeometry()
     
     qDebug() << "Setting up default cube geometry";
     
-    // Create a simple cube as default geometry
+    // Create a cube to show when no STL file is loaded
+    // Each line has: X, Y, Z position + X, Y, Z normal vector
     QVector<float> cubeVertices = {
         // Front face
         -1.0f, -1.0f,  1.0f,  0.0f,  0.0f,  1.0f,
@@ -758,7 +759,7 @@ void GLWidget::setupDefaultGeometry()
         -1.0f,  1.0f, -1.0f,  0.0f,  1.0f,  0.0f
     };
     
-    // Reset model state for default geometry
+    // Set up the internal state for displaying a cube
     triangleCount = 12; // 12 triangles for a cube
     hasModel = false;
     indices.clear(); // No indices for cube
@@ -778,19 +779,19 @@ void GLWidget::setupVertexBuffer(const QVector<float>& vertexData)
     try {
         makeCurrent();
 
-        // Clean up existing buffers
+        // Remove any old vertex data first
         if (vertexBuffer.isCreated()) vertexBuffer.destroy();
         if (indexBuffer.isCreated()) indexBuffer.destroy();
         if (vao.isCreated()) vao.destroy();
 
-        // Calculate bounding box for loaded models
+        // Figure out how big the model is (only for STL files)
         if (hasModel) {
             calculateBoundingBox(vertexData);
         } else {
             boundingBoxValid = false;
         }
     
-    // Create VAO
+    // Create VAO (Vertex Array Object) to store our vertex setup
     if (!vao.create()) {
         qCritical() << "Failed to create VAO";
         doneCurrent();
@@ -798,7 +799,7 @@ void GLWidget::setupVertexBuffer(const QVector<float>& vertexData)
     }
     vao.bind();
 
-    // Create VBO
+    // Create VBO (Vertex Buffer Object) to hold vertex data in GPU memory
     if (!vertexBuffer.create()) {
         qCritical() << "Failed to create vertex buffer";
         vao.release();
@@ -809,14 +810,14 @@ void GLWidget::setupVertexBuffer(const QVector<float>& vertexData)
     vertexBuffer.bind();
     vertexBuffer.allocate(vertexData.data(), static_cast<int>(vertexData.size() * sizeof(float)));
 
-    // Set up vertex attributes (position + normal)
+    // Tell OpenGL how to interpret our vertex data (position + normal)
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
     
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
     
-    // Set up index buffer if we have indices
+    // Set up index buffer for STL models (helps with performance)
     if (hasModel && !indices.isEmpty()) {
         if (!indexBuffer.create()) {
             qCritical() << "Failed to create index buffer";
@@ -859,19 +860,19 @@ void GLWidget::loadSTLFile(const QString &fileName)
     }
 
     try {
-        // Clean up previous model but don't reset to cube yet
+        // Remove any previously loaded model
         cleanupModel();
         
-        // Create loader and configure it
+        // Set up the STL file reader
         STLLoader loader;
         loader.setAutoCenter(true);
         loader.setAutoNormalize(true);
         
-        // Load the file
+        // Try to read the STL file
         STLLoader::LoadResult result = loader.loadFile(fileName);
         
         if (result == STLLoader::Success) {
-            // Get vertex data from loader
+            // Get the 3D model data that was loaded
             const QVector<float>& vertexData = loader.getVertexData();
             const QVector<unsigned int>& indexData = loader.getIndices();
             
@@ -881,7 +882,7 @@ void GLWidget::loadSTLFile(const QString &fileName)
                 return;
             }
             
-            // CRITICAL: Validate data consistency
+            // Check that the loaded data makes sense before using it
             int expectedVertexCount = vertexData.size() / 6; // 6 floats per vertex (pos + normal)
             qDebug() << "STL Data validation:";
             qDebug() << "  Raw vertex data size:" << vertexData.size();
@@ -890,7 +891,7 @@ void GLWidget::loadSTLFile(const QString &fileName)
             qDebug() << "  Index count:" << indexData.size();
             qDebug() << "  Triangle count:" << loader.getTriangleCount();
         
-        // Validate indices don't exceed vertex count
+        // Make sure triangle indices don't point to non-existent vertices
         if (!indexData.isEmpty()) {
             unsigned int maxIndex = *std::max_element(indexData.begin(), indexData.end());
             if (maxIndex >= static_cast<unsigned int>(expectedVertexCount)) {
@@ -901,7 +902,7 @@ void GLWidget::loadSTLFile(const QString &fileName)
             }
         }
         
-        // Set model data BEFORE calling setupVertexBuffer
+        // Store the model information before setting up GPU buffers
         triangleCount = loader.getTriangleCount();
         hasModel = true;
         indices = indexData;
@@ -909,15 +910,15 @@ void GLWidget::loadSTLFile(const QString &fileName)
         qDebug() << "STL loaded successfully. Triangles:" << triangleCount 
                  << "Vertices:" << expectedVertexCount;
         
-            // Setup vertex buffer with the loaded data
+            // Send the model data to the graphics card
             setupVertexBuffer(vertexData);
             
-            // Automatically fit the model to window after loading with a small delay
+            // Adjust the camera to show the whole model nicely
             QTimer::singleShot(100, this, &GLWidget::fitToWindow);
             
             emit fileLoaded(QFileInfo(fileName).fileName(), triangleCount, expectedVertexCount);
             
-            // Force an update
+            // Redraw the display
             update();        } else {
             QString errorMsg = "Failed to load STL file: " + loader.getErrorString();
             qWarning() << errorMsg;
@@ -1031,12 +1032,12 @@ void GLWidget::cleanupModel()
 
 void GLWidget::resetCamera()
 {
-    // Reset the Camera object to its default state
+    // Put the camera back to its starting position
     if (camera) {
         camera->reset();
     }
     
-    // Reset the old rotation and zoom variables
+    // Reset rotation and zoom back to defaults
     zoomFactor = 1.0f;
     rotationX = rotationY = rotationZ = 0.0f;
     
@@ -1049,18 +1050,18 @@ void GLWidget::fitToWindow()
         return;
     }
     
-    // Reset camera first
+    // Start with a fresh camera position
     camera->reset();
     rotationX = rotationY = rotationZ = 0.0f;
     zoomFactor = 1.0f;
     
     if (!boundingBoxValid || !hasModel) {
-        // Just reset for default cube or invalid bounds
+        // Nothing special to do for the default cube
         update();
         return;
     }
     
-    // Validate bounding box values
+    // Make sure the model dimensions make sense
     if (!qIsFinite(modelRadius) || modelRadius <= 0.0f ||
         !qIsFinite(modelCenter.x()) || !qIsFinite(modelCenter.y()) || !qIsFinite(modelCenter.z())) {
         qWarning() << "Invalid bounding box, cannot fit to window";
@@ -1068,11 +1069,11 @@ void GLWidget::fitToWindow()
         return;
     }
     
-    // Calculate optimal camera distance
+    // Figure out how far back the camera needs to be to see the whole model
     float fovRadians = qDegreesToRadians(camera->getFov());
     float aspectRatio = float(width()) / float(height() ? height() : 1);
     
-    // Validate FOV and aspect ratio
+    // Make sure camera settings are reasonable
     if (!qIsFinite(fovRadians) || fovRadians <= 0.0f || fovRadians >= M_PI ||
         !qIsFinite(aspectRatio) || aspectRatio <= 0.0f) {
         qWarning() << "Invalid camera parameters for fit to window";
@@ -1080,31 +1081,31 @@ void GLWidget::fitToWindow()
         return;
     }
     
-    // Calculate distance needed to fit the model
+    // Calculate how far back the camera should be
     float distance;
     if (aspectRatio >= 1.0f) {
-        // Landscape or square - fit to height
+        // Wide window - fit to height
         distance = modelRadius / tanf(fovRadians * 0.5f);
     } else {
-        // Portrait - fit to width, accounting for aspect ratio
+        // Tall window - fit to width
         float horizontalFov = 2.0f * atanf(tanf(fovRadians * 0.5f) * aspectRatio);
         distance = modelRadius / tanf(horizontalFov * 0.5f);
     }
     
-    // Validate distance and add some padding
+    // Make sure we got a reasonable distance and add some space around the model
     if (!qIsFinite(distance) || distance <= 0.0f) {
         distance = 5.0f; // Fallback distance
     } else {
         distance *= 1.2f; // Add padding
     }
     
-    // Clamp distance to reasonable bounds
+    // Keep distance within reasonable limits
     distance = qBound(0.1f, distance, 100.0f);
     
-    // Position camera to look at model center
+    // Put the camera back from the model center
     QVector3D cameraPos = modelCenter + QVector3D(0, 0, distance);
     
-    // Validate final position
+    // Make sure the camera position makes sense
     if (!qIsFinite(cameraPos.x()) || !qIsFinite(cameraPos.y()) || !qIsFinite(cameraPos.z())) {
         qWarning() << "Invalid camera position calculated";
         camera->reset();
