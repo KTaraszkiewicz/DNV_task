@@ -371,6 +371,9 @@ void GLWidget::paintGL()
         // Add bounds checking for draw call
         if (indexCount > 0 && indexCount < 1000000) { // Sanity check
             qDebug() << "About to call glDrawElements with" << indexCount << "indices";
+
+            // Use glDrawElements with proper type
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer.bufferId());
             
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_INT, 0);
             
@@ -484,9 +487,10 @@ void GLWidget::mouseMoveEvent(QMouseEvent *event)
             qDebug() << "GLWidget::mouseMoveEvent: New rotations X:" << rotationX << "Y:" << rotationY;
         } else if (mouseButton == Qt::RightButton && camera) {
             // Pan
-            float panX = float(delta.x());
-            float panY = float(-delta.y());
-            qDebug() << "GLWidget::mouseMoveEvent: Panning" << panX << panY;
+            float panSensitivity = 0.01f; // Lower value for less sensitivity
+            float panX = float(delta.x()) * panSensitivity;
+            float panY = float(-delta.y()) * panSensitivity;
+            qDebug() << "GLWidget::mouseMoveEvent: Panning" << panX << panY << "(sensitivity:" << panSensitivity << ")";
             camera->pan(panX, panY);
         }
         lastMousePos = event->pos();
